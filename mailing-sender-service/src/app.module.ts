@@ -1,25 +1,34 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { BullModule } from "@nestjs/bull";
-import { QueeingMailsService } from "./mailing/service/queueing.mails.service";
-import { MailingController } from "./mailing/controller/mailing.controller";
-import { MailingProcessor } from "./mailing/emails.queue.processor";
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullModule } from '@nestjs/bullmq';
+import { MailingController } from './mailing/mailing.controller';
+import { MailingService } from './mailing/mailing.service';
+import { MailingProcessor } from './mailing/mailing.processor';
 
 @Module({
   imports: [
-    ConfigModule.forRoot(),
-    BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST,
-        port: parseInt(process.env.REDIS_PORT),
-        password: process.env.REDIS_PASSWORD,
-      },
+    ConfigModule.forRoot({ isGlobal: true }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        connection: {
+          host: cfg.get<string>('REDIS_HOST', 'localhost'),
+          port: Number(cfg.get('REDIS_PORT', 6379)),
+          password: cfg.get<string>('REDIS_PASSWORD') || undefined,
+        },
+      }),
     }),
     BullModule.registerQueue({
-      name: process.env.QUEUE_NAME,
+      name: 'mailing',
+      defaultJobOptions: {
+        attempts: Number(process.env.QUEUE_RETRIES ?? 3),
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+      },
     }),
   ],
   controllers: [MailingController],
-  providers: [QueeingMailsService, MailingProcessor],
+  providers: [MailingService, MailingProcessor],
 })
 export class AppModule {}

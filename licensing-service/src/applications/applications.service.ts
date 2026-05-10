@@ -1,264 +1,279 @@
 import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  ForbiddenException,
-  ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { Application } from './entities/application.entity';
-import { ApplicationDocument } from '../documents/entities/document.entity';
+import { LicenseType } from '../license-types/entities/license-type.entity';
 import { User } from '../users/entities/user.entity';
-import { AuditService } from '../audit/audit.service';
 import { StateMachineService } from './state-machine.service';
-import { CreateApplicationDto } from './dto/create-application.dto';
-import {
-  RequestAdditionalInfoDto,
-  CompleteReviewDto,
-  MakeDecisionDto,
-} from './dto/transition.dto';
-import { ApplicationStatus } from '../common/enums/application-status.enum';
+import { CommentsService } from '../comments/comments.service';
+import { CommentKind } from '../comments/entities/comment.entity';
+import { AuditService } from '../audit/audit.service';
+import { EventsHelper } from '../common/helpers/events.helper';
+import { ReferenceIdHelper } from '../common/helpers/reference-id.helper';
+import { FilterHelper } from '../common/helpers/filter.helper';
 import { UserRole } from '../common/enums/user-role.enum';
+import { ApplicationStatus } from '../common/enums/application-status.enum';
+import {
+  ApproveDto,
+  CompleteReviewDto,
+  CreateApplicationDto,
+  ListApplicationsDto,
+  RejectDto,
+  RequestInfoDto,
+} from './dto/application.dto';
 
 @Injectable()
 export class ApplicationsService {
   constructor(
-    @InjectRepository(Application)
-    private appRepository: Repository<Application>,
-    @InjectRepository(ApplicationDocument)
-    private docRepository: Repository<ApplicationDocument>,
-    private dataSource: DataSource,
-    private stateMachine: StateMachineService,
-    private auditService: AuditService,
+    private state: StateMachineService,
+    private comments: CommentsService,
+    private audit: AuditService,
+    private events: EventsHelper,
+    private refs: ReferenceIdHelper,
+    private filter: FilterHelper,
+    private ds: DataSource,
   ) {}
 
-  async create(dto: CreateApplicationDto, actor: User): Promise<Application> {
-    const app = this.appRepository.create({
-      ...dto,
-      applicant_id: actor.id,
-      status: ApplicationStatus.DRAFT,
+  async create(dto: CreateApplicationDto, actor: User) {
+    if (actor.role !== UserRole.APPLICANT) {
+      throw new ForbiddenException('Only applicants can create applications');
+    }
+    const lt = await LicenseType.findOne({
+      where: { id: dto.license_type_id, is_active: true },
+      relations: ['department'],
     });
+    if (!lt) throw new BadRequestException('License type not found or inactive');
 
-    const saved = await this.appRepository.save(app);
+    const a = new Application();
+    a.reference_id = await this.refs.next();
+    a.applicant_id = actor.id;
+    a.license_type_id = lt.id;
+    a.department_id = lt.department_id;
+    a.applicant_name_snapshot = actor.full_name;
+    a.institution_name_snapshot = actor.institution_name ?? null;
+    a.email_snapshot = actor.email;
+    a.phone_snapshot = actor.phone ?? null;
+    a.status = ApplicationStatus.DRAFT;
+    await a.save();
 
-    await this.auditService.log({
-      application_id: saved.id,
+    await this.audit.log({
+      application_id: a.id,
       actor_id: actor.id,
       action: 'APPLICATION_CREATED',
       previous_state: null,
       new_state: ApplicationStatus.DRAFT,
-      metadata: { institution_name: dto.institution_name },
     });
-
-    return saved;
+    return a;
   }
 
-  async findAll(actor: User): Promise<Application[]> {
-    const qb = this.appRepository
-      .createQueryBuilder('app')
-      .leftJoinAndSelect('app.applicant', 'applicant')
-      .leftJoinAndSelect('app.reviewer', 'reviewer')
-      .leftJoinAndSelect('app.approver', 'approver')
-      .orderBy('app.created_at', 'DESC');
+  list(q: ListApplicationsDto, actor: User) {
+    const where: Record<string, unknown> = {};
+    if (q.status) where.status = q.status;
+    if (q.license_type_id) where.license_type_id = q.license_type_id;
 
-    // Applicants only see their own applications
-    if (actor.role === UserRole.APPLICANT) {
-      qb.where('app.applicant_id = :id', { id: actor.id });
-    }
-
-    return qb.getMany();
-  }
-
-  async findOne(id: string, actor: User): Promise<Application> {
-    const app = await this.appRepository.findOne({
-      where: { id },
-      relations: ['applicant', 'reviewer', 'approver', 'documents', 'documents.uploader'],
-    });
-
-    if (!app) throw new NotFoundException('Application not found');
-
-    if (actor.role === UserRole.APPLICANT && app.applicant_id !== actor.id) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    return app;
-  }
-
-  // SUBMIT (DRAFT → SUBMITTED or ADDITIONAL_INFO_REQUIRED → SUBMITTED)
-  async submit(id: string, actor: User): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(app, ApplicationStatus.SUBMITTED, actor);
-
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.SUBMITTED;
-
-      // Increment submission version on resubmission
-      if (prevStatus === ApplicationStatus.ADDITIONAL_INFO_REQUIRED) {
-        app.submission_version += 1;
-        app.additional_info_request = null;
+    if (actor.role === UserRole.APPLICANT || q.mine) {
+      where.applicant_id = actor.id;
+    } else if (actor.role === UserRole.REVIEWER || actor.role === UserRole.APPROVER) {
+      if (!actor.department_id) {
+        return Promise.resolve({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 10,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        });
       }
+      where.department_id = actor.department_id;
+    }
 
-      return { app, action: 'APPLICATION_SUBMITTED', prevStatus };
+    return this.filter.paginate(Application, {
+      page: q.page,
+      pageSize: q.pageSize,
+      where: Object.keys(where).length ? where : undefined,
+      relations: ['applicant', 'license_type', 'department', 'reviewer', 'approver'],
+      search: {
+        term: q.search,
+        columns: ['reference_id', 'applicant_name_snapshot', 'institution_name_snapshot'],
+      },
     });
   }
 
-  // START REVIEW (SUBMITTED → UNDER_REVIEW)
-  async startReview(id: string, actor: User): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(app, ApplicationStatus.UNDER_REVIEW, actor);
+  async getOne(id: string, actor: User) {
+    const a = await Application.findOne({
+      where: { id },
+      relations: [
+        'applicant',
+        'license_type',
+        'license_type.requirements',
+        'department',
+        'reviewer',
+        'approver',
+        'documents',
+        'documents.uploader',
+        'comments',
+        'comments.author',
+      ],
+    });
+    if (!a) throw new NotFoundException('Application not found');
+    this.assertVisible(a, actor);
+    return a;
+  }
 
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.UNDER_REVIEW;
-      app.reviewer_id = actor.id;
-
-      return { app, action: 'REVIEW_STARTED', prevStatus };
+  submit(id: string, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.SUBMITTED, actor);
+      const wasInfoRequired = a.status === ApplicationStatus.ADDITIONAL_INFO_REQUIRED;
+      a.status = ApplicationStatus.SUBMITTED;
+      a.submitted_at = new Date();
+      if (wasInfoRequired) a.submission_version += 1;
+      return { action: wasInfoRequired ? 'APPLICATION_RESUBMITTED' : 'APPLICATION_SUBMITTED' };
     });
   }
 
-  // REQUEST ADDITIONAL INFO (UNDER_REVIEW → ADDITIONAL_INFO_REQUIRED)
-  async requestAdditionalInfo(
-    id: string,
-    dto: RequestAdditionalInfoDto,
-    actor: User,
-  ): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(
-        app,
-        ApplicationStatus.ADDITIONAL_INFO_REQUIRED,
-        actor,
+  startReview(id: string, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.UNDER_REVIEW, actor);
+      a.status = ApplicationStatus.UNDER_REVIEW;
+      a.reviewer_id = actor.id;
+      return { action: 'REVIEW_STARTED' };
+    });
+  }
+
+  requestInfo(id: string, dto: RequestInfoDto, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.ADDITIONAL_INFO_REQUIRED, actor);
+      this.assertAssignedReviewer(a, actor);
+      a.status = ApplicationStatus.ADDITIONAL_INFO_REQUIRED;
+
+      await this.comments.record(
+        a.id,
+        actor.id,
+        CommentKind.INFO_REQUEST,
+        dto.comment,
+        dto.attachment_key && dto.attachment_name
+          ? { key: dto.attachment_key, name: dto.attachment_name }
+          : undefined,
       );
 
-      // Reviewer can only handle their own assigned application
-      if (app.reviewer_id && app.reviewer_id !== actor.id) {
-        throw new ForbiddenException('This application is assigned to a different reviewer');
-      }
+      await this.events.sendEmail({
+        to: a.email_snapshot,
+        name: a.applicant_name_snapshot,
+        subject: `Additional information requested — ${a.reference_id}`,
+        message: `A reviewer has requested additional information for your application ${a.reference_id}: ${dto.comment}`,
+      });
 
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.ADDITIONAL_INFO_REQUIRED;
-      app.additional_info_request = dto.additional_info_request;
-      if (dto.reviewer_notes) app.reviewer_notes = dto.reviewer_notes;
-
-      return {
-        app,
-        action: 'ADDITIONAL_INFO_REQUESTED',
-        prevStatus,
-        metadata: { additional_info_request: dto.additional_info_request },
-      };
+      return { action: 'ADDITIONAL_INFO_REQUESTED' };
     });
   }
 
-  // COMPLETE REVIEW (UNDER_REVIEW → REVIEWED)
-  async completeReview(id: string, dto: CompleteReviewDto, actor: User): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(app, ApplicationStatus.REVIEWED, actor);
-
-      if (app.reviewer_id && app.reviewer_id !== actor.id) {
-        throw new ForbiddenException('This application is assigned to a different reviewer');
-      }
-
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.REVIEWED;
-      if (dto.reviewer_notes) app.reviewer_notes = dto.reviewer_notes;
-
-      return { app, action: 'REVIEW_COMPLETED', prevStatus };
+  completeReview(id: string, dto: CompleteReviewDto, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.REVIEWED, actor);
+      this.assertAssignedReviewer(a, actor);
+      a.status = ApplicationStatus.REVIEWED;
+      await this.comments.record(a.id, actor.id, CommentKind.REVIEW_NOTE, dto.comment);
+      return { action: 'REVIEW_COMPLETED' };
     });
   }
 
-  // APPROVE (REVIEWED → APPROVED)
-  async approve(id: string, dto: MakeDecisionDto, actor: User): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(app, ApplicationStatus.APPROVED, actor);
-
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.APPROVED;
-      app.approver_id = actor.id;
-      if (dto.decision_notes) app.decision_notes = dto.decision_notes;
-
-      return {
-        app,
-        action: 'APPLICATION_APPROVED',
-        prevStatus,
-        metadata: { decision_notes: dto.decision_notes },
-      };
+  approve(id: string, dto: ApproveDto, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.APPROVED, actor);
+      a.status = ApplicationStatus.APPROVED;
+      a.approver_id = actor.id;
+      a.decided_at = new Date();
+      await this.comments.record(a.id, actor.id, CommentKind.APPROVAL, dto.comment);
+      await this.events.sendEmail({
+        to: a.email_snapshot,
+        name: a.applicant_name_snapshot,
+        subject: `Application approved — ${a.reference_id}`,
+        message: `Your application ${a.reference_id} has been approved. ${dto.comment}`,
+      });
+      return { action: 'APPLICATION_APPROVED' };
     });
   }
 
-  // REJECT (REVIEWED → REJECTED)
-  async reject(id: string, dto: MakeDecisionDto, actor: User): Promise<Application> {
-    return this.transitionWithLock(id, actor, async (app) => {
-      this.stateMachine.validateTransition(app, ApplicationStatus.REJECTED, actor);
-
-      const prevStatus = app.status;
-      app.status = ApplicationStatus.REJECTED;
-      app.approver_id = actor.id;
-      if (dto.decision_notes) app.decision_notes = dto.decision_notes;
-
-      return {
-        app,
-        action: 'APPLICATION_REJECTED',
-        prevStatus,
-        metadata: { decision_notes: dto.decision_notes },
-      };
+  reject(id: string, dto: RejectDto, actor: User) {
+    return this.transition(id, actor, async (a) => {
+      this.state.validateTransition(a, ApplicationStatus.REJECTED, actor);
+      a.status = ApplicationStatus.REJECTED;
+      a.approver_id = actor.id;
+      a.decided_at = new Date();
+      await this.comments.record(a.id, actor.id, CommentKind.REJECTION, dto.comment);
+      await this.events.sendEmail({
+        to: a.email_snapshot,
+        name: a.applicant_name_snapshot,
+        subject: `Application rejected — ${a.reference_id}`,
+        message: `Your application ${a.reference_id} has been rejected. Reason: ${dto.comment}`,
+      });
+      return { action: 'APPLICATION_REJECTED' };
     });
   }
 
-  /**
-   * Wraps state transitions in a serializable transaction with optimistic locking.
-   * If two users attempt to transition the same application simultaneously,
-   * one will succeed and the other will receive a 409 Conflict.
-   */
-  private async transitionWithLock(
+  private async transition(
     id: string,
     actor: User,
-    mutate: (app: Application) => Promise<{
-      app: Application;
-      action: string;
-      prevStatus: ApplicationStatus;
-      metadata?: Record<string, unknown>;
-    }>,
-  ): Promise<Application> {
-    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-      // Pessimistic write lock — only one transaction can hold this at a time
-      const app = await manager
-        .createQueryBuilder(Application, 'app')
+    mutate: (a: Application) => Promise<{ action: string }>,
+  ) {
+    return this.ds.transaction('SERIALIZABLE', async (m) => {
+      const a = await m
+        .createQueryBuilder(Application, 'a')
         .setLock('pessimistic_write')
-        .where('app.id = :id', { id })
+        .where('a.id = :id', { id })
         .getOne();
+      if (!a) throw new NotFoundException('Application not found');
 
-      if (!app) throw new NotFoundException('Application not found');
+      this.assertVisible(a, actor);
 
-      if (actor.role === UserRole.APPLICANT && app.applicant_id !== actor.id) {
-        throw new ForbiddenException('Access denied');
-      }
-
-      const { app: updatedApp, action, prevStatus, metadata } = await mutate(app);
+      const prev = a.status;
+      const { action } = await mutate(a);
 
       try {
-        const saved = await manager.save(Application, updatedApp);
-
-        await this.auditService.log({
-          application_id: id,
-          actor_id: actor.id,
-          action,
-          previous_state: prevStatus,
-          new_state: updatedApp.status,
-          metadata,
-        });
-
-        return saved;
-      } catch (err: unknown) {
-        // TypeORM OptimisticLockVersionMismatchError or serialization failures
+        await m.save(Application, a);
+      } catch (e) {
         if (
-          err instanceof Error &&
-          (err.name === 'OptimisticLockVersionMismatchError' ||
-            (err as NodeJS.ErrnoException).code === '40001')
+          e instanceof Error &&
+          (e.name === 'OptimisticLockVersionMismatchError' ||
+            (e as NodeJS.ErrnoException).code === '40001')
         ) {
-          throw new ConflictException(
-            'Another user modified this application simultaneously. Please refresh and try again.',
-          );
+          throw new ConflictException('Another user modified this application. Please retry.');
         }
-        throw err;
+        throw e;
       }
+
+      await this.audit.log({
+        application_id: a.id,
+        actor_id: actor.id,
+        action,
+        previous_state: prev,
+        new_state: a.status,
+      });
+      return a;
     });
+  }
+
+  private assertVisible(a: Application, actor: User) {
+    if (actor.role === UserRole.APPLICANT && a.applicant_id !== actor.id) {
+      throw new ForbiddenException('Access denied');
+    }
+    if (
+      (actor.role === UserRole.REVIEWER || actor.role === UserRole.APPROVER) &&
+      actor.department_id !== a.department_id
+    ) {
+      throw new ForbiddenException('This application belongs to a different department');
+    }
+  }
+
+  private assertAssignedReviewer(a: Application, actor: User) {
+    if (a.reviewer_id && a.reviewer_id !== actor.id) {
+      throw new ForbiddenException('This application is assigned to a different reviewer');
+    }
   }
 }

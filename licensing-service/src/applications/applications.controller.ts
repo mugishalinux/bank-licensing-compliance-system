@@ -1,111 +1,113 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
-  Patch,
   Param,
-  Body,
-  UseGuards,
   ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApplicationsService } from './applications.service';
-import { CreateApplicationDto } from './dto/create-application.dto';
 import {
-  RequestAdditionalInfoDto,
+  ApproveDto,
   CompleteReviewDto,
-  MakeDecisionDto,
-} from './dto/transition.dto';
+  CreateApplicationDto,
+  ListApplicationsDto,
+  RejectDto,
+  RequestInfoDto,
+} from './dto/application.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import { ResponseMessage } from '../common/decorators/response-message.decorator';
 
 @ApiTags('applications')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('applications')
 export class ApplicationsController {
-  constructor(private readonly applicationsService: ApplicationsService) {}
+  constructor(private svc: ApplicationsService) {}
 
   @Post()
   @Roles(UserRole.APPLICANT)
-  @ApiOperation({ summary: 'Create a new draft application' })
+  @ResponseMessage('Application created')
   create(@Body() dto: CreateApplicationDto, @CurrentUser() user: User) {
-    return this.applicationsService.create(dto, user);
+    return this.svc.create(dto, user);
   }
 
   @Get()
   @Roles(UserRole.APPLICANT, UserRole.REVIEWER, UserRole.APPROVER, UserRole.ADMIN)
-  @ApiOperation({ summary: 'List applications (scope filtered by role)' })
-  findAll(@CurrentUser() user: User) {
-    return this.applicationsService.findAll(user);
+  list(@Query() q: ListApplicationsDto, @CurrentUser() user: User) {
+    return this.svc.list(q, user);
   }
 
   @Get(':id')
   @Roles(UserRole.APPLICANT, UserRole.REVIEWER, UserRole.APPROVER, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get application details' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
-    return this.applicationsService.findOne(id, user);
+  getOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+    return this.svc.getOne(id, user);
   }
 
   @Patch(':id/submit')
   @Roles(UserRole.APPLICANT)
-  @ApiOperation({ summary: 'Submit a draft application (or resubmit after info request)' })
+  @ResponseMessage('Application submitted')
   submit(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
-    return this.applicationsService.submit(id, user);
+    return this.svc.submit(id, user);
   }
 
   @Patch(':id/start-review')
   @Roles(UserRole.REVIEWER)
-  @ApiOperation({ summary: 'Assign yourself as reviewer and begin review' })
+  @ResponseMessage('Review started')
   startReview(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
-    return this.applicationsService.startReview(id, user);
+    return this.svc.startReview(id, user);
   }
 
   @Patch(':id/request-info')
   @Roles(UserRole.REVIEWER)
-  @ApiOperation({ summary: 'Request additional information from the applicant' })
-  requestAdditionalInfo(
+  @ResponseMessage('Additional information requested')
+  requestInfo(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: RequestAdditionalInfoDto,
+    @Body() dto: RequestInfoDto,
     @CurrentUser() user: User,
   ) {
-    return this.applicationsService.requestAdditionalInfo(id, dto, user);
+    return this.svc.requestInfo(id, dto, user);
   }
 
   @Patch(':id/complete-review')
   @Roles(UserRole.REVIEWER)
-  @ApiOperation({ summary: 'Mark review complete and forward to approver' })
+  @ResponseMessage('Review completed')
   completeReview(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CompleteReviewDto,
     @CurrentUser() user: User,
   ) {
-    return this.applicationsService.completeReview(id, dto, user);
+    return this.svc.completeReview(id, dto, user);
   }
 
   @Patch(':id/approve')
   @Roles(UserRole.APPROVER)
-  @ApiOperation({ summary: 'Approve a reviewed application (cannot be the reviewer)' })
+  @ResponseMessage('Application approved')
   approve(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: MakeDecisionDto,
+    @Body() dto: ApproveDto,
     @CurrentUser() user: User,
   ) {
-    return this.applicationsService.approve(id, dto, user);
+    return this.svc.approve(id, dto, user);
   }
 
   @Patch(':id/reject')
   @Roles(UserRole.APPROVER)
-  @ApiOperation({ summary: 'Reject a reviewed application (cannot be the reviewer)' })
+  @ResponseMessage('Application rejected')
   reject(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: MakeDecisionDto,
+    @Body() dto: RejectDto,
     @CurrentUser() user: User,
   ) {
-    return this.applicationsService.reject(id, dto, user);
+    return this.svc.reject(id, dto, user);
   }
 }
