@@ -7,6 +7,8 @@ import { Application } from '../../applications/entities/application.entity';
 import { AuditLog } from '../../audit/entities/audit-log.entity';
 import { Department } from '../../departments/entities/department.entity';
 import { InstitutionType } from '../../institution-types/entities/institution-type.entity';
+import { LicenseType } from '../../license-types/entities/license-type.entity';
+import { LicenseRequirement } from '../../license-types/entities/license-requirement.entity';
 import { UserRole } from '../../common/enums/user-role.enum';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 
@@ -37,12 +39,106 @@ export class SeedService {
     @InjectRepository(AuditLog) private auditRepo: Repository<AuditLog>,
     @InjectRepository(Department) private deptRepo: Repository<Department>,
     @InjectRepository(InstitutionType) private instRepo: Repository<InstitutionType>,
+    @InjectRepository(LicenseType) private ltRepo: Repository<LicenseType>,
+    @InjectRepository(LicenseRequirement) private lrRepo: Repository<LicenseRequirement>,
   ) {}
 
   async seed(): Promise<void> {
     await this.seedDepartments();
     await this.seedInstitutionTypes();
+    await this.seedLicenseTypes();
     await this.seedUsersAndApps();
+  }
+
+  private async seedLicenseTypes() {
+    if ((await this.ltRepo.count()) > 0) return;
+    const bank = await this.deptRepo.findOne({ where: { code: 'BANK' } });
+    const ins = await this.deptRepo.findOne({ where: { code: 'INS' } });
+    if (!bank || !ins) return;
+
+    const commercial = await this.ltRepo.save(
+      this.ltRepo.create({
+        name: 'Commercial Banking License',
+        description: 'License to operate as a commercial bank.',
+        department_id: bank.id,
+        processing_time_days: 90,
+        is_paid: true,
+        fee_amount: '5000000.00',
+      }),
+    );
+    const mfi = await this.ltRepo.save(
+      this.ltRepo.create({
+        name: 'Microfinance License',
+        description: 'License to operate a microfinance institution.',
+        department_id: bank.id,
+        processing_time_days: 60,
+        is_paid: true,
+        fee_amount: '500000.00',
+      }),
+    );
+    const insurance = await this.ltRepo.save(
+      this.ltRepo.create({
+        name: 'Insurance Underwriting License',
+        description: 'License to underwrite insurance policies.',
+        department_id: ins.id,
+        processing_time_days: 120,
+        is_paid: true,
+        fee_amount: '2000000.00',
+      }),
+    );
+
+    await this.lrRepo.save([
+      this.lrRepo.create({
+        license_type_id: commercial.id,
+        name: 'Certificate of incorporation',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: commercial.id,
+        name: 'Five-year business plan',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: commercial.id,
+        name: 'Audited financial statements (last 3 years)',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: commercial.id,
+        name: 'Proof of paid-up capital',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: mfi.id,
+        name: 'Certificate of incorporation',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: mfi.id,
+        name: 'Three-year business plan',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: insurance.id,
+        name: 'Certificate of incorporation',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+      this.lrRepo.create({
+        license_type_id: insurance.id,
+        name: 'Reinsurance arrangements',
+        is_mandatory: true,
+        requires_attachment: true,
+      }),
+    ]);
+
+    this.log.log('Seeded license types and requirements');
   }
 
   private async seedDepartments() {
