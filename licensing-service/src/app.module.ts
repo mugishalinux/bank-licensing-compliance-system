@@ -9,10 +9,14 @@ import { UsersModule } from './users/users.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { DocumentsModule } from './documents/documents.module';
 import { AuditModule } from './audit/audit.module';
+import { DepartmentsModule } from './departments/departments.module';
+import { InstitutionTypesModule } from './institution-types/institution-types.module';
 import { SeedService } from './database/seeds/seed.service';
 import { User } from './users/entities/user.entity';
 import { Application } from './applications/entities/application.entity';
 import { AuditLog } from './audit/entities/audit-log.entity';
+import { Department } from './departments/entities/department.entity';
+import { InstitutionType } from './institution-types/entities/institution-type.entity';
 import { HelpersModule } from './common/helpers/helpers.module';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
@@ -22,9 +26,11 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     ThrottlerModule.forRoot([{ ttl: seconds(60), limit: 100 }]),
     DatabaseModule,
     HelpersModule,
-    TypeOrmModule.forFeature([User, Application, AuditLog]),
+    TypeOrmModule.forFeature([User, Application, AuditLog, Department, InstitutionType]),
     AuthModule,
     UsersModule,
+    DepartmentsModule,
+    InstitutionTypesModule,
     ApplicationsModule,
     DocumentsModule,
     AuditModule,

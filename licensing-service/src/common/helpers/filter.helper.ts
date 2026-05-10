@@ -1,13 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
+  BaseEntity,
   Between,
-  FindManyOptions,
   FindOptionsOrder,
   FindOptionsWhere,
   LessThanOrEqual,
   Like,
   MoreThanOrEqual,
-  ObjectLiteral,
 } from 'typeorm';
 
 export interface PageOptions<T> {
@@ -30,28 +29,26 @@ export interface Page<T> {
   hasPrev: boolean;
 }
 
-type ARClass<T extends ObjectLiteral> = {
-  findAndCount(opts: FindManyOptions<T>): Promise<[T[], number]>;
-};
+type EntityClass<T extends BaseEntity> = { new (): T } & typeof BaseEntity;
 
 @Injectable()
 export class FilterHelper {
-  async paginate<T extends ObjectLiteral>(
-    entity: ARClass<T>,
+  async paginate<T extends BaseEntity>(
+    Entity: EntityClass<T>,
     opts: PageOptions<T> = {},
   ): Promise<Page<T>> {
     const page = Math.max(1, Number(opts.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
 
-    const where = this.buildWhere(opts);
+    const where = this.buildWhere<T>(opts);
 
-    const [items, total] = await entity.findAndCount({
-      where,
+    const [items, total] = (await Entity.findAndCount({
+      where: where as FindOptionsWhere<T>,
       relations: opts.relations,
-      order: opts.order ?? ({ created_at: 'DESC' } as unknown as FindOptionsOrder<T>),
+      order: (opts.order ?? { created_at: 'DESC' }) as FindOptionsOrder<T>,
       take: pageSize,
       skip: (page - 1) * pageSize,
-    });
+    })) as [T[], number];
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     return {
@@ -65,10 +62,8 @@ export class FilterHelper {
     };
   }
 
-  private buildWhere<T extends ObjectLiteral>(
-    opts: PageOptions<T>,
-  ): FindOptionsWhere<T> | FindOptionsWhere<T>[] | undefined {
-    const base: Record<string, any> = { ...(opts.where as object) };
+  private buildWhere<T>(opts: PageOptions<T>): FindOptionsWhere<T> | FindOptionsWhere<T>[] | undefined {
+    const base: Record<string, unknown> = { ...(opts.where as object) };
 
     if (opts.dateRange?.column) {
       const { column, from, to } = opts.dateRange;

@@ -5,37 +5,66 @@ import * as bcrypt from 'bcrypt';
 import { User } from '../../users/entities/user.entity';
 import { Application } from '../../applications/entities/application.entity';
 import { AuditLog } from '../../audit/entities/audit-log.entity';
+import { Department } from '../../departments/entities/department.entity';
+import { InstitutionType } from '../../institution-types/entities/institution-type.entity';
 import { UserRole } from '../../common/enums/user-role.enum';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 
+const DEFAULT_DEPARTMENTS = [
+  { code: 'BANK', name: 'Banking Supervision', description: 'Oversees commercial banks and microfinance institutions.' },
+  { code: 'INS', name: 'Insurance Supervision', description: 'Oversees insurance companies and brokers.' },
+  { code: 'PSP', name: 'Payment Systems', description: 'Licenses payment service providers and forex bureaus.' },
+  { code: 'CAP', name: 'Capital Markets', description: 'Oversees capital markets participants.' },
+];
+
+const DEFAULT_INSTITUTION_TYPES = [
+  { name: 'Commercial Bank' },
+  { name: 'Microfinance Institution' },
+  { name: 'SACCO' },
+  { name: 'Forex Bureau' },
+  { name: 'Insurance Company' },
+  { name: 'Insurance Broker' },
+  { name: 'Payment Service Provider' },
+];
+
 @Injectable()
 export class SeedService {
-  private readonly logger = new Logger(SeedService.name);
+  private readonly log = new Logger(SeedService.name);
 
   constructor(
-    @InjectRepository(User)
-    private userRepo: Repository<User>,
-    @InjectRepository(Application)
-    private appRepo: Repository<Application>,
-    @InjectRepository(AuditLog)
-    private auditRepo: Repository<AuditLog>,
+    @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(Application) private appRepo: Repository<Application>,
+    @InjectRepository(AuditLog) private auditRepo: Repository<AuditLog>,
+    @InjectRepository(Department) private deptRepo: Repository<Department>,
+    @InjectRepository(InstitutionType) private instRepo: Repository<InstitutionType>,
   ) {}
 
   async seed(): Promise<void> {
-    const existingAdmin = await this.userRepo.findOne({
-      where: { email: 'admin@bnr.rw' },
-    });
+    await this.seedDepartments();
+    await this.seedInstitutionTypes();
+    await this.seedUsersAndApps();
+  }
 
-    if (existingAdmin) {
-      this.logger.log('Seed data already exists — skipping');
-      return;
-    }
+  private async seedDepartments() {
+    const count = await this.deptRepo.count();
+    if (count > 0) return;
+    await this.deptRepo.save(DEFAULT_DEPARTMENTS.map((d) => this.deptRepo.create(d)));
+    this.log.log(`Seeded ${DEFAULT_DEPARTMENTS.length} departments`);
+  }
 
-    this.logger.log('Seeding database...');
+  private async seedInstitutionTypes() {
+    const count = await this.instRepo.count();
+    if (count > 0) return;
+    await this.instRepo.save(DEFAULT_INSTITUTION_TYPES.map((t) => this.instRepo.create(t)));
+    this.log.log(`Seeded ${DEFAULT_INSTITUTION_TYPES.length} institution types`);
+  }
+
+  private async seedUsersAndApps() {
+    const existingAdmin = await this.userRepo.findOne({ where: { email: 'admin@bnr.rw' } });
+    if (existingAdmin) return;
 
     const hash = (pw: string) => bcrypt.hash(pw, 12);
 
-    // --- Users ---
     const [admin, reviewer, approver, applicant1, applicant2] = await this.userRepo.save([
       this.userRepo.create({
         email: 'admin@bnr.rw',
@@ -69,9 +98,6 @@ export class SeedService {
       }),
     ]);
 
-    this.logger.log('Users created');
-
-    // --- Application 1: In REVIEWED state (ready for approval decision) ---
     const app1 = await this.appRepo.save(
       this.appRepo.create({
         institution_name: 'Kigali Commercial Bank Ltd',
@@ -86,7 +112,6 @@ export class SeedService {
       }),
     );
 
-    // --- Application 2: In DRAFT state ---
     const app2 = await this.appRepo.save(
       this.appRepo.create({
         institution_name: 'Rwanda Savings MFI Ltd',
@@ -99,7 +124,6 @@ export class SeedService {
       }),
     );
 
-    // --- Audit trail for app1 ---
     await this.auditRepo.save([
       this.auditRepo.create({
         application_id: app1.id,
@@ -130,10 +154,6 @@ export class SeedService {
         new_state: ApplicationStatus.REVIEWED,
         metadata: { reviewer_notes: 'All documents are in order.' },
       }),
-    ]);
-
-    // --- Audit trail for app2 ---
-    await this.auditRepo.save([
       this.auditRepo.create({
         application_id: app2.id,
         actor_id: applicant2.id,
@@ -143,14 +163,6 @@ export class SeedService {
       }),
     ]);
 
-    this.logger.log('Seed complete');
-    this.logger.log('='.repeat(50));
-    this.logger.log('Seed credentials:');
-    this.logger.log('  Admin:    admin@bnr.rw     / Admin@1234');
-    this.logger.log('  Reviewer: reviewer@bnr.rw  / Reviewer@1234');
-    this.logger.log('  Approver: approver@bnr.rw  / Approver@1234');
-    this.logger.log('  Applicant 1: bank1@example.rw / Bank1@1234');
-    this.logger.log('  Applicant 2: bank2@example.rw / Bank2@1234');
-    this.logger.log('='.repeat(50));
+    this.log.log('Users + applications seeded');
   }
 }
