@@ -12,6 +12,7 @@ import { AuditModule } from './audit/audit.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { InstitutionTypesModule } from './institution-types/institution-types.module';
 import { LicenseTypesModule } from './license-types/license-types.module';
+import { CommentsModule } from './comments/comments.module';
 import { SeedService } from './database/seeds/seed.service';
 import { User } from './users/entities/user.entity';
 import { Application } from './applications/entities/application.entity';
@@ -20,6 +21,7 @@ import { Department } from './departments/entities/department.entity';
 import { InstitutionType } from './institution-types/entities/institution-type.entity';
 import { LicenseType } from './license-types/entities/license-type.entity';
 import { LicenseRequirement } from './license-types/entities/license-requirement.entity';
+import { Comment } from './comments/entities/comment.entity';
 import { HelpersModule } from './common/helpers/helpers.module';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
@@ -37,6 +39,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
       InstitutionType,
       LicenseType,
       LicenseRequirement,
+      Comment,
     ]),
     AuthModule,
     UsersModule,
@@ -44,6 +47,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     InstitutionTypesModule,
     LicenseTypesModule,
     ApplicationsModule,
+    CommentsModule,
     DocumentsModule,
     AuditModule,
   ],

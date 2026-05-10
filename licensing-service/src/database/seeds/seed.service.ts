@@ -216,55 +216,6 @@ export class SeedService {
       }),
     ]);
 
-    const reviewer = users.find((u) => u.email === 'reviewer.banking@bnr.rw')!;
-    const applicant1 = users.find((u) => u.email === 'bank1@example.rw')!;
-
-    const app1 = await this.appRepo.save(
-      this.appRepo.create({
-        institution_name: 'Kigali Commercial Bank Ltd',
-        institution_type: 'Commercial Bank',
-        description: 'Full-service commercial bank targeting SMEs and retail customers.',
-        registered_address: 'KG 7 Ave, Kigali, Rwanda',
-        registration_number: 'RCA/COM/2024/001',
-        status: ApplicationStatus.REVIEWED,
-        applicant_id: applicant1.id,
-        reviewer_id: reviewer.id,
-        reviewer_notes: 'All documents are in order. Financial projections appear realistic.',
-      }),
-    );
-
-    await this.auditRepo.save([
-      this.auditRepo.create({
-        application_id: app1.id,
-        actor_id: applicant1.id,
-        action: 'APPLICATION_CREATED',
-        previous_state: null,
-        new_state: ApplicationStatus.DRAFT,
-      }),
-      this.auditRepo.create({
-        application_id: app1.id,
-        actor_id: applicant1.id,
-        action: 'APPLICATION_SUBMITTED',
-        previous_state: ApplicationStatus.DRAFT,
-        new_state: ApplicationStatus.SUBMITTED,
-      }),
-      this.auditRepo.create({
-        application_id: app1.id,
-        actor_id: reviewer.id,
-        action: 'REVIEW_STARTED',
-        previous_state: ApplicationStatus.SUBMITTED,
-        new_state: ApplicationStatus.UNDER_REVIEW,
-      }),
-      this.auditRepo.create({
-        application_id: app1.id,
-        actor_id: reviewer.id,
-        action: 'REVIEW_COMPLETED',
-        previous_state: ApplicationStatus.UNDER_REVIEW,
-        new_state: ApplicationStatus.REVIEWED,
-        metadata: { reviewer_notes: 'All documents are in order.' },
-      }),
-    ]);
-
-    this.log.log('Seeded users and one sample application');
+    this.log.log('Seeded users');
   }
 }

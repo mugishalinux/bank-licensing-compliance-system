@@ -1,34 +1,34 @@
-import { NestFactory } from "@nestjs/core";
-import { AppModule } from "./app.module";
-import { Transport } from "@nestjs/microservices";
-import * as dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
-
   const app = await NestFactory.create(AppModule);
-  const kafkaBrokerUrl = process.env.KAFKA_BROKER_URL || 'localhost:9092';
+  const cfg = app.get(ConfigService);
+  const log = new Logger('bootstrap');
 
-  app.connectMicroservice({
+  app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.KAFKA,
     options: {
       client: {
-        brokers: [kafkaBrokerUrl],
-        clientId: 'notification-service',
+        clientId: 'mailing-sender-service',
+        brokers: [cfg.get<string>('KAFKA_BROKER_URL', 'localhost:9092')],
       },
       consumer: {
-        groupId: process.env.KAFKA_GROUP_ID || 'manager',
+        groupId: cfg.get<string>('KAFKA_GROUP_ID', 'mailing'),
       },
     },
   });
 
   await app.startAllMicroservices();
-  await app.listen(process.env.NODE_PORT || 6000);
+  const port = Number(cfg.get('NODE_PORT', 3002));
+  await app.listen(port);
+  log.log(`mailing-sender-service ready on :${port}`);
 }
 
-bootstrap().catch(err => {
-  console.error('Error starting application:', err);
+bootstrap().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

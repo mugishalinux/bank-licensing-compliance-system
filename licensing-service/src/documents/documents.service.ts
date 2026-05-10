@@ -1,139 +1,161 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  ForbiddenException,
-  BadRequestException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { v4 as uuid } from 'uuid';
+import { fileTypeFromBuffer } from 'file-type';
 import { Application } from '../applications/entities/application.entity';
-import { ApplicationDocument } from './entities/document.entity';
+import { ApplicationDocument, DocumentStatus } from './entities/document.entity';
+import { LicenseRequirement } from '../license-types/entities/license-requirement.entity';
 import { User } from '../users/entities/user.entity';
 import { AuditService } from '../audit/audit.service';
+import { StorageHelper } from '../common/helpers/storage.helper';
 import { UserRole } from '../common/enums/user-role.enum';
 import { ApplicationStatus } from '../common/enums/application-status.enum';
-import * as path from 'path';
-import * as fs from 'fs';
+import { ALLOWED_MIME_TYPES, PresignUploadDto } from './dto/document.dto';
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+const EDITABLE_STATUSES = [ApplicationStatus.DRAFT, ApplicationStatus.ADDITIONAL_INFO_REQUIRED];
 
 @Injectable()
 export class DocumentsService {
   constructor(
-    @InjectRepository(ApplicationDocument)
-    private docRepository: Repository<ApplicationDocument>,
-    @InjectRepository(Application)
-    private appRepository: Repository<Application>,
-    private auditService: AuditService,
-  ) {
-    if (!fs.existsSync(UPLOAD_DIR)) {
-      fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    private storage: StorageHelper,
+    private audit: AuditService,
+  ) {}
+
+  async presignUpload(applicationId: string, dto: PresignUploadDto, actor: User) {
+    if (!ALLOWED_MIME_TYPES.includes(dto.mime_type)) {
+      throw new BadRequestException('File type not allowed');
     }
+    const app = await this.assertEditable(applicationId, actor);
+
+    if (dto.requirement_id) {
+      const req = await LicenseRequirement.findOne({ where: { id: dto.requirement_id } });
+      if (!req || req.license_type_id !== app.license_type_id) {
+        throw new BadRequestException('Requirement does not belong to this application');
+      }
+    }
+
+    const ext = this.extOf(dto.original_name);
+    const object_key = `apps/${applicationId}/v${app.submission_version}/${uuid()}${ext}`;
+
+    const doc = new ApplicationDocument();
+    doc.application_id = app.id;
+    doc.requirement_id = dto.requirement_id ?? null;
+    doc.original_name = dto.original_name;
+    doc.object_key = object_key;
+    doc.size = String(dto.size);
+    doc.mime_type = dto.mime_type;
+    doc.status = DocumentStatus.PENDING_UPLOAD;
+    doc.uploader_id = actor.id;
+    doc.submission_version = app.submission_version;
+    await doc.save();
+
+    const upload_url = await this.storage.presignUpload(object_key, dto.mime_type);
+    return {
+      document_id: doc.id,
+      object_key,
+      upload_url,
+      expires_in: 600,
+    };
   }
 
-  async upload(
-    applicationId: string,
-    file: Express.Multer.File,
-    actor: User,
-  ): Promise<ApplicationDocument> {
-    // Server-side size enforcement (Multer also enforces but this is a belt-and-suspenders check)
-    if (file.size > MAX_FILE_SIZE) {
-      fs.unlinkSync(file.path);
-      throw new BadRequestException('File exceeds maximum allowed size of 5MB');
+  async confirm(docId: string, actor: User) {
+    const doc = await this.getOwnedDoc(docId, actor);
+    if (doc.status === DocumentStatus.READY) return doc;
+
+    let head: Buffer;
+    try {
+      head = await this.storage.fetchHead(doc.object_key);
+    } catch {
+      throw new BadRequestException('Upload not found in storage');
     }
 
-    const app = await this.appRepository.findOne({ where: { id: applicationId } });
-    if (!app) {
-      fs.unlinkSync(file.path);
-      throw new NotFoundException('Application not found');
+    const detected = await fileTypeFromBuffer(head);
+    if (!detected || !ALLOWED_MIME_TYPES.includes(detected.mime)) {
+      doc.status = DocumentStatus.REJECTED;
+      await doc.save();
+      throw new BadRequestException('File content does not match an allowed type');
     }
 
-    // Applicants can only upload to their own applications
-    if (actor.role === UserRole.APPLICANT && app.applicant_id !== actor.id) {
-      fs.unlinkSync(file.path);
-      throw new ForbiddenException('Access denied');
-    }
+    doc.mime_type = detected.mime;
+    doc.status = DocumentStatus.READY;
+    await doc.save();
 
-    // Documents can only be uploaded when application is editable
-    const editableStatuses = [
-      ApplicationStatus.DRAFT,
-      ApplicationStatus.ADDITIONAL_INFO_REQUIRED,
-    ];
-    if (!editableStatuses.includes(app.status)) {
-      fs.unlinkSync(file.path);
-      throw new BadRequestException(
-        `Cannot upload documents when application is in ${app.status} state`,
-      );
-    }
-
-    const doc = this.docRepository.create({
-      application_id: applicationId,
-      original_name: file.originalname,
-      stored_name: file.filename,
-      size: file.size,
-      mime_type: file.mimetype,
-      uploader_id: actor.id,
-      submission_version: app.submission_version,
-    });
-
-    const saved = await this.docRepository.save(doc);
-
-    await this.auditService.log({
-      application_id: applicationId,
+    await this.audit.log({
+      application_id: doc.application_id,
       actor_id: actor.id,
       action: 'DOCUMENT_UPLOADED',
-      metadata: {
-        document_id: saved.id,
-        original_name: file.originalname,
-        size: file.size,
-        submission_version: app.submission_version,
-      },
+      metadata: { document_id: doc.id, original_name: doc.original_name },
     });
 
-    return saved;
+    return doc;
   }
 
-  async findByApplication(applicationId: string, actor: User): Promise<ApplicationDocument[]> {
-    const app = await this.appRepository.findOne({ where: { id: applicationId } });
+  async listForApplication(applicationId: string, actor: User) {
+    const app = await Application.findOne({ where: { id: applicationId } });
     if (!app) throw new NotFoundException('Application not found');
+    this.assertVisible(app, actor);
 
+    return ApplicationDocument.find({
+      where: { application_id: applicationId, status: DocumentStatus.READY },
+      relations: ['uploader'],
+      order: { submission_version: 'ASC', created_at: 'ASC' },
+    });
+  }
+
+  async presignDownload(docId: string, actor: User) {
+    const doc = await ApplicationDocument.findOne({
+      where: { id: docId },
+      relations: ['application'],
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (doc.status !== DocumentStatus.READY) throw new BadRequestException('Document not ready');
+    this.assertVisible(doc.application, actor);
+    const url = await this.storage.presignDownload(doc.object_key, doc.original_name);
+    return { url, expires_in: 600 };
+  }
+
+  private async assertEditable(applicationId: string, actor: User) {
+    const app = await Application.findOne({ where: { id: applicationId } });
+    if (!app) throw new NotFoundException('Application not found');
+    if (actor.role !== UserRole.APPLICANT || app.applicant_id !== actor.id) {
+      throw new ForbiddenException('Only the applicant can upload documents');
+    }
+    if (!EDITABLE_STATUSES.includes(app.status)) {
+      throw new BadRequestException(`Cannot upload while application is ${app.status}`);
+    }
+    return app;
+  }
+
+  private async getOwnedDoc(docId: string, actor: User) {
+    const doc = await ApplicationDocument.findOne({
+      where: { id: docId },
+      relations: ['application'],
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (actor.role !== UserRole.APPLICANT || doc.application.applicant_id !== actor.id) {
+      throw new ForbiddenException('Access denied');
+    }
+    return doc;
+  }
+
+  private assertVisible(app: Application, actor: User) {
     if (actor.role === UserRole.APPLICANT && app.applicant_id !== actor.id) {
       throw new ForbiddenException('Access denied');
     }
-
-    return this.docRepository.find({
-      where: { application_id: applicationId },
-      order: { submission_version: 'ASC', uploaded_at: 'ASC' },
-      relations: ['uploader'],
-    });
+    if (
+      (actor.role === UserRole.REVIEWER || actor.role === UserRole.APPROVER) &&
+      actor.department_id !== app.department_id
+    ) {
+      throw new ForbiddenException('This application belongs to a different department');
+    }
   }
 
-  getFilePath(filename: string): string {
-    const filePath = path.join(UPLOAD_DIR, filename);
-    if (!fs.existsSync(filePath)) {
-      throw new NotFoundException('File not found');
-    }
-    // Prevent path traversal
-    const resolved = path.resolve(filePath);
-    if (!resolved.startsWith(path.resolve(UPLOAD_DIR))) {
-      throw new ForbiddenException('Invalid file path');
-    }
-    return resolved;
-  }
-
-  async findDocumentById(docId: string, actor: User): Promise<ApplicationDocument> {
-    const doc = await this.docRepository.findOne({
-      where: { id: docId },
-      relations: ['application', 'uploader'],
-    });
-
-    if (!doc) throw new NotFoundException('Document not found');
-
-    if (actor.role === UserRole.APPLICANT && doc.application.applicant_id !== actor.id) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    return doc;
+  private extOf(name: string) {
+    const i = name.lastIndexOf('.');
+    return i >= 0 ? name.slice(i).toLowerCase() : '';
   }
 }
