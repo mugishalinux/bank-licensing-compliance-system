@@ -1,60 +1,69 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
   Param,
-  Body,
-  Patch,
-  UseGuards,
   ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { ListUsersDto } from './dto/list-users.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
+import { ResponseMessage } from '../common/decorators/response-message.decorator';
 
 @ApiTags('users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private svc: UsersService) {}
 
   @Post()
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Create a new user (Admin only)' })
+  @ResponseMessage('User created')
   create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+    return this.svc.create(dto);
   }
 
   @Get()
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'List all users (Admin only)' })
-  findAll() {
-    return this.usersService.findAll();
+  list(@Query() q: ListUsersDto) {
+    return this.svc.list(q);
   }
 
   @Get(':id')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get a specific user (Admin only)' })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.findOne(id);
+  getOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.svc.getOne(id);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.ADMIN)
+  @ResponseMessage('User updated')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserDto) {
+    return this.svc.update(id, dto);
   }
 
   @Patch(':id/deactivate')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Deactivate a user (Admin only)' })
+  @ResponseMessage('User deactivated')
   deactivate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.deactivate(id);
+    return this.svc.deactivate(id);
   }
 
   @Patch(':id/activate')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Re-activate a user (Admin only)' })
+  @ResponseMessage('User activated')
   activate(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.activate(id);
+    return this.svc.activate(id);
   }
 }

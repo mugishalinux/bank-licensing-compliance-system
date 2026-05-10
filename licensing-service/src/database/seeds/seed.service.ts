@@ -10,6 +10,7 @@ import { InstitutionType } from '../../institution-types/entities/institution-ty
 import { LicenseType } from '../../license-types/entities/license-type.entity';
 import { LicenseRequirement } from '../../license-types/entities/license-requirement.entity';
 import { UserRole } from '../../common/enums/user-role.enum';
+import { ApplicantType } from '../../common/enums/applicant-type.enum';
 import { ApplicationStatus } from '../../common/enums/application-status.enum';
 
 const DEFAULT_DEPARTMENTS = [
@@ -160,8 +161,10 @@ export class SeedService {
     if (existingAdmin) return;
 
     const hash = (pw: string) => bcrypt.hash(pw, 12);
+    const bank = await this.deptRepo.findOne({ where: { code: 'BANK' } });
+    const ins = await this.deptRepo.findOne({ where: { code: 'INS' } });
 
-    const [admin, reviewer, approver, applicant1, applicant2] = await this.userRepo.save([
+    const users = await this.userRepo.save([
       this.userRepo.create({
         email: 'admin@bnr.rw',
         password_hash: await hash('Admin@1234'),
@@ -169,30 +172,52 @@ export class SeedService {
         full_name: 'System Administrator',
       }),
       this.userRepo.create({
-        email: 'reviewer@bnr.rw',
+        email: 'reviewer.banking@bnr.rw',
         password_hash: await hash('Reviewer@1234'),
         role: UserRole.REVIEWER,
         full_name: 'Alice Uwimana',
+        department_id: bank?.id ?? null,
       }),
       this.userRepo.create({
-        email: 'approver@bnr.rw',
+        email: 'approver.banking@bnr.rw',
         password_hash: await hash('Approver@1234'),
         role: UserRole.APPROVER,
         full_name: 'Bob Nkurunziza',
+        department_id: bank?.id ?? null,
+      }),
+      this.userRepo.create({
+        email: 'reviewer.insurance@bnr.rw',
+        password_hash: await hash('Reviewer@1234'),
+        role: UserRole.REVIEWER,
+        full_name: 'Claire Mutoni',
+        department_id: ins?.id ?? null,
+      }),
+      this.userRepo.create({
+        email: 'approver.insurance@bnr.rw',
+        password_hash: await hash('Approver@1234'),
+        role: UserRole.APPROVER,
+        full_name: 'David Habimana',
+        department_id: ins?.id ?? null,
       }),
       this.userRepo.create({
         email: 'bank1@example.rw',
         password_hash: await hash('Bank1@1234'),
         role: UserRole.APPLICANT,
-        full_name: 'Kigali Commercial Bank',
+        full_name: 'Eric Niyonsaba',
+        applicant_type: ApplicantType.ORGANIZATION,
+        institution_name: 'Kigali Commercial Bank Ltd',
       }),
       this.userRepo.create({
-        email: 'bank2@example.rw',
-        password_hash: await hash('Bank2@1234'),
+        email: 'jean@example.rw',
+        password_hash: await hash('Jean@1234'),
         role: UserRole.APPLICANT,
-        full_name: 'Rwanda Savings MFI',
+        full_name: 'Jean Mukama',
+        applicant_type: ApplicantType.INDIVIDUAL,
       }),
     ]);
+
+    const reviewer = users.find((u) => u.email === 'reviewer.banking@bnr.rw')!;
+    const applicant1 = users.find((u) => u.email === 'bank1@example.rw')!;
 
     const app1 = await this.appRepo.save(
       this.appRepo.create({
@@ -205,18 +230,6 @@ export class SeedService {
         applicant_id: applicant1.id,
         reviewer_id: reviewer.id,
         reviewer_notes: 'All documents are in order. Financial projections appear realistic.',
-      }),
-    );
-
-    const app2 = await this.appRepo.save(
-      this.appRepo.create({
-        institution_name: 'Rwanda Savings MFI Ltd',
-        institution_type: 'Microfinance Institution',
-        description: 'Microfinance institution focused on rural agricultural financing.',
-        registered_address: 'KN 3 Rd, Musanze, Rwanda',
-        registration_number: 'RCA/MFI/2024/042',
-        status: ApplicationStatus.DRAFT,
-        applicant_id: applicant2.id,
       }),
     );
 
@@ -250,15 +263,8 @@ export class SeedService {
         new_state: ApplicationStatus.REVIEWED,
         metadata: { reviewer_notes: 'All documents are in order.' },
       }),
-      this.auditRepo.create({
-        application_id: app2.id,
-        actor_id: applicant2.id,
-        action: 'APPLICATION_CREATED',
-        previous_state: null,
-        new_state: ApplicationStatus.DRAFT,
-      }),
     ]);
 
-    this.log.log('Users + applications seeded');
+    this.log.log('Seeded users and one sample application');
   }
 }
