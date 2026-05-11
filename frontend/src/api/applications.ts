@@ -1,55 +1,43 @@
-import api from './axios';
-import { ApiResponse, Application } from '../types';
+import api, { unwrap, unwrapPage } from './axios';
+import { Application, ApplicationStatus, Envelope } from '../types';
+
+export interface DecisionPayload {
+  comment: string;
+  attachment_key?: string;
+  attachment_name?: string;
+}
 
 export const applicationsApi = {
-  list: async (): Promise<Application[]> => {
-    const res = await api.get<ApiResponse<Application[]>>('/applications');
-    return res.data.data;
-  },
+  list: (q: {
+    search?: string;
+    status?: ApplicationStatus;
+    license_type_id?: string;
+    mine?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {}) => api.get<Envelope<Application[]>>('/applications', { params: q }).then(unwrapPage),
 
-  get: async (id: string): Promise<Application> => {
-    const res = await api.get<ApiResponse<Application>>(`/applications/${id}`);
-    return res.data.data;
-  },
+  get: (id: string) =>
+    api.get<Envelope<Application>>(`/applications/${id}`).then(unwrap),
 
-  create: async (data: {
-    institution_name: string;
-    institution_type: string;
-    description?: string;
-    registered_address?: string;
-    registration_number?: string;
-  }): Promise<Application> => {
-    const res = await api.post<ApiResponse<Application>>('/applications', data);
-    return res.data.data;
-  },
+  create: (license_type_id: string) =>
+    api.post<Envelope<Application>>('/applications', { license_type_id }).then(unwrap),
 
-  submit: async (id: string): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/submit`);
-    return res.data.data;
-  },
+  submit: (id: string) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/submit`).then(unwrap),
 
-  startReview: async (id: string): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/start-review`);
-    return res.data.data;
-  },
+  startReview: (id: string) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/start-review`).then(unwrap),
 
-  requestInfo: async (id: string, data: { additional_info_request: string; reviewer_notes?: string }): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/request-info`, data);
-    return res.data.data;
-  },
+  requestInfo: (id: string, dto: DecisionPayload) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/request-info`, dto).then(unwrap),
 
-  completeReview: async (id: string, data: { reviewer_notes?: string }): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/complete-review`, data);
-    return res.data.data;
-  },
+  completeReview: (id: string, dto: DecisionPayload) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/complete-review`, dto).then(unwrap),
 
-  approve: async (id: string, data: { decision_notes?: string }): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/approve`, data);
-    return res.data.data;
-  },
+  approve: (id: string, dto: DecisionPayload) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/approve`, dto).then(unwrap),
 
-  reject: async (id: string, data: { decision_notes?: string }): Promise<Application> => {
-    const res = await api.patch<ApiResponse<Application>>(`/applications/${id}/reject`, data);
-    return res.data.data;
-  },
+  reject: (id: string, dto: DecisionPayload) =>
+    api.patch<Envelope<Application>>(`/applications/${id}/reject`, dto).then(unwrap),
 };

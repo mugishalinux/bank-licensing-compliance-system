@@ -1,12 +1,98 @@
 @import "tailwindcss";
 
+@theme {
+  --color-bnr: rgb(137, 115, 78);
+  --color-bnr-dark: rgb(108, 90, 60);
+  --color-bnr-soft: rgb(245, 240, 230);
+  --color-bnr-line: rgb(229, 220, 200);
+  --color-ink: rgb(20, 20, 20);
+  --color-ink-soft: rgb(95, 95, 95);
+  --color-page: rgb(255, 255, 255);
+  --color-surface: rgb(252, 250, 246);
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
 * {
   box-sizing: border-box;
 }
 
+html, body, #app {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: #f9fafb;
-  color: #111827;
+  font-family: var(--font-sans);
+  background: var(--color-page);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms, border-color 120ms, color 120ms;
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.btn-primary { background: var(--color-bnr); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--color-bnr-dark); }
+
+.btn-ghost { background: transparent; color: var(--color-ink); border-color: var(--color-bnr-line); }
+.btn-ghost:hover:not(:disabled) { background: var(--color-bnr-soft); }
+
+.btn-danger { background: #fff; color: #b91c1c; border-color: #fecaca; }
+.btn-danger:hover:not(:disabled) { background: #fee2e2; }
+
+.input, .select, .textarea {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-bnr-line);
+  border-radius: 0.375rem;
+  background: #fff;
+  font-size: 0.875rem;
+  outline: none;
+}
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--color-bnr);
+  box-shadow: 0 0 0 3px rgba(137, 115, 78, 0.15);
+}
+
+.label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-ink);
+  margin-bottom: 0.375rem;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--color-bnr-line);
+  border-radius: 0.5rem;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
