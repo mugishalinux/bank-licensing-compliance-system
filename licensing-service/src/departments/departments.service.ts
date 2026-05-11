@@ -6,10 +6,15 @@ import {
   UpdateDepartmentDto,
 } from './dto/department.dto';
 import { FilterHelper } from '../common/helpers/filter.helper';
+import { RedisHelper } from '../common/helpers/redis.helper';
+import { LOOKUP_TTL, cacheKeys } from '../common/helpers/cache-keys';
 
 @Injectable()
 export class DepartmentsService {
-  constructor(private filter: FilterHelper) {}
+  constructor(
+    private filter: FilterHelper,
+    private cache: RedisHelper,
+  ) {}
 
   async create(dto: CreateDepartmentDto) {
     if (await Department.findOne({ where: [{ name: dto.name }, { code: dto.code }] })) {
@@ -30,13 +35,16 @@ export class DepartmentsService {
   }
 
   async getOne(id: string) {
-    const d = await Department.findOne({ where: { id } });
-    if (!d) throw new NotFoundException('Department not found');
+    const cached = await this.cache.get<Department>(cacheKeys.dept(id));
+    if (cached) return cached;
+
+    const d = await this.findEntity(id);
+    await this.cache.set(cacheKeys.dept(id), d, LOOKUP_TTL);
     return d;
   }
 
   async update(id: string, dto: UpdateDepartmentDto) {
-    const d = await this.getOne(id);
+    const d = await this.findEntity(id);
 
     if (dto.name && dto.name !== d.name) {
       const dup = await Department.findOne({ where: { name: dto.name } });
@@ -48,13 +56,23 @@ export class DepartmentsService {
     }
 
     Object.assign(d, dto);
-    return d.save();
+    const saved = await d.save();
+    await this.cache.del(cacheKeys.dept(id));
+    return saved;
   }
 
   async deactivate(id: string) {
-    const d = await this.getOne(id);
+    const d = await this.findEntity(id);
     if (!d.is_active) return d;
     d.is_active = false;
-    return d.save();
+    const saved = await d.save();
+    await this.cache.del(cacheKeys.dept(id));
+    return saved;
+  }
+
+  private async findEntity(id: string) {
+    const d = await Department.findOne({ where: { id } });
+    if (!d) throw new NotFoundException('Department not found');
+    return d;
   }
 }
