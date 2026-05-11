@@ -1,46 +1,62 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, UserRole } from '../types';
 import { authApi } from '../api/auth';
+import { tokens } from '../api/axios';
 
-interface AuthContextValue {
+interface Ctx {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
-  hasRole: (...roles: UserRole[]) => boolean;
+  requestLoginOtp: (email: string, password: string) => Promise<void>;
+  confirmLoginOtp: (email: string, otp: string) => Promise<User>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  hasRole: (...r: UserRole[]) => boolean;
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+const AuthCtx = createContext<Ctx | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    const stored = localStorage.getItem('user');
-    if (token && stored) {
-      try {
-        setUser(JSON.parse(stored) as User);
-      } catch {
-        localStorage.clear();
-      }
+    if (!tokens.access) {
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
+    authApi
+      .me()
+      .then((u) => {
+        setUser(u);
+        localStorage.setItem('user', JSON.stringify(u));
+      })
+      .catch(() => tokens.clear())
+      .finally(() => setIsLoading(false));
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const { access_token, user: loggedInUser } = await authApi.login(email, password);
-    localStorage.setItem('access_token', access_token);
-    localStorage.setItem('user', JSON.stringify(loggedInUser));
-    setUser(loggedInUser);
+  const requestLoginOtp = useCallback(async (email: string, password: string) => {
+    await authApi.requestLoginOtp(email, password);
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user');
+  const confirmLoginOtp = useCallback(async (email: string, otp: string) => {
+    const t = await authApi.confirmLoginOtp(email, otp);
+    tokens.set(t.access_token, t.refresh_token);
+    localStorage.setItem('user', JSON.stringify(t.user));
+    setUser(t.user);
+    return t.user;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try { await authApi.logout(); } catch { /* ignore */ }
+    tokens.clear();
     setUser(null);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const u = await authApi.me();
+    localStorage.setItem('user', JSON.stringify(u));
+    setUser(u);
   }, []);
 
   const hasRole = useCallback(
@@ -49,16 +65,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider
-      value={{ user, isAuthenticated: !!user, isLoading, login, logout, hasRole }}
+    <AuthCtx.Provider
+      value={{
+        user,
+        isAuthenticated: !!user,
+        isLoading,
+        requestLoginOtp,
+        confirmLoginOtp,
+        logout,
+        refreshUser,
+        hasRole,
+      }}
     >
       {children}
-    </AuthContext.Provider>
+    </AuthCtx.Provider>
   );
 }
 
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+export function useAuth(): Ctx {
+  const c = useContext(AuthCtx);
+  if (!c) throw new Error('useAuth outside AuthProvider');
+  return c;
 }

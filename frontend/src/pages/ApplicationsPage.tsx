@@ -1,111 +1,154 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Search, FileText, Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { applicationsApi } from '../api/applications';
-import { UserRole } from '../types';
+import { ApplicationStatus, UserRole } from '../types';
+import { STATUS_LABEL, fmtRel } from '../utils/formatters';
 import StatusBadge from '../components/common/StatusBadge';
-import { formatDate } from '../utils/formatters';
-import { Plus, FileText, Search } from 'lucide-react';
-import { useState } from 'react';
+import PageHeader from '../components/common/PageHeader';
+import { PageLoader } from '../components/common/Spinner';
+import EmptyState from '../components/common/EmptyState';
 
 export default function ApplicationsPage() {
-  const { hasRole } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
+  const isApplicant = user?.role === UserRole.APPLICANT;
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<'' | ApplicationStatus>('');
+  const [page, setPage] = useState(1);
 
-  const { data: applications = [], isLoading, isError } = useQuery({
-    queryKey: ['applications'],
-    queryFn: applicationsApi.list,
+  const { data, isLoading } = useQuery({
+    queryKey: ['apps', { search, status, page }],
+    queryFn: () =>
+      applicationsApi.list({
+        search: search || undefined,
+        status: status || undefined,
+        page,
+        pageSize: 20,
+      }),
   });
 
-  const filtered = applications.filter((a) =>
-    a.institution_name.toLowerCase().includes(search.toLowerCase()) ||
-    a.institution_type.toLowerCase().includes(search.toLowerCase()),
-  );
-
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Applications</h1>
-          <p className="text-sm text-gray-500 mt-1">{applications.length} total</p>
-        </div>
-        {hasRole(UserRole.APPLICANT) && (
-          <button
-            onClick={() => navigate('/applications/new')}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={16} />
-            New Application
-          </button>
-        )}
-      </div>
+    <div>
+      <PageHeader
+        title={isApplicant ? 'My applications' : 'Applications queue'}
+        subtitle={
+          isApplicant
+            ? 'Applications you have submitted to the BNR.'
+            : user?.department
+              ? `Applications routed to ${user.department.name}.`
+              : 'All applications.'
+        }
+        actions={
+          isApplicant && (
+            <Link to="/catalog" className="btn btn-primary">
+              <Plus size={15} /> New application
+            </Link>
+          )
+        }
+      />
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by institution name or type..."
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+      <div className="card p-4 mb-4 flex gap-3 items-center flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--color-ink-soft)]" />
+          <input
+            className="input pl-9"
+            placeholder="Search by reference, applicant or institution…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          />
+        </div>
+        <select
+          className="select max-w-[200px]"
+          value={status}
+          onChange={(e) => { setStatus(e.target.value as ApplicationStatus | ''); setPage(1); }}
+        >
+          <option value="">All statuses</option>
+          {Object.values(ApplicationStatus).map((s) => (
+            <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+          ))}
+        </select>
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-        </div>
-      ) : isError ? (
-        <div className="text-center py-20">
-          <p className="text-red-600 font-medium">Failed to load applications.</p>
-          <p className="text-gray-500 text-sm mt-1">Please refresh the page.</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-20">
-          <FileText className="mx-auto text-gray-300 mb-3" size={48} />
-          <p className="text-gray-500 font-medium">
-            {search ? 'No applications match your search.' : 'No applications found.'}
-          </p>
-          {hasRole(UserRole.APPLICANT) && !search && (
-            <button
-              onClick={() => navigate('/applications/new')}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
-            >
-              Submit your first application
-            </button>
-          )}
-        </div>
+        <PageLoader />
+      ) : (data?.items.length ?? 0) === 0 ? (
+        <EmptyState
+          icon={<FileText size={32} />}
+          title={isApplicant ? 'No applications yet' : 'No applications found'}
+          message={
+            isApplicant
+              ? 'Start by browsing the license catalog.'
+              : 'Try clearing the filters above.'
+          }
+          action={
+            isApplicant && (
+              <Link to="/catalog" className="btn btn-primary"><Plus size={15} /> Browse catalog</Link>
+            )
+          }
+        />
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Institution</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map((app) => (
-                <tr
-                  key={app.id}
-                  onClick={() => navigate(`/applications/${app.id}`)}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <td className="px-6 py-4 font-medium text-gray-900">{app.institution_name}</td>
-                  <td className="px-6 py-4 text-gray-500">{app.institution_type}</td>
-                  <td className="px-6 py-4"><StatusBadge status={app.status} /></td>
-                  <td className="px-6 py-4 text-gray-500">{formatDate(app.created_at)}</td>
-                  <td className="px-6 py-4 text-gray-500">{formatDate(app.updated_at)}</td>
+        <>
+          <div className="card overflow-hidden">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="bg-[color:var(--color-surface)] text-[color:var(--color-ink-soft)] text-[11px] uppercase tracking-wider">
+                  <th className="text-left px-4 py-2.5 font-medium">Reference</th>
+                  <th className="text-left px-4 py-2.5 font-medium">License type</th>
+                  {!isApplicant && <th className="text-left px-4 py-2.5 font-medium">Applicant</th>}
+                  <th className="text-left px-4 py-2.5 font-medium">Status</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Updated</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {data?.items.map((a) => (
+                  <tr key={a.id} className="border-t border-[color:var(--color-bnr-line)] hover:bg-bnr-soft/40">
+                    <td className="px-4 py-3">
+                      <Link to={`/applications/${a.id}`} className="font-mono text-bnr hover:underline">
+                        {a.reference_id}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="truncate max-w-[280px]">{a.license_type?.name ?? '—'}</div>
+                      <div className="text-[11px] text-[color:var(--color-ink-soft)]">
+                        {a.department?.name ?? ''}
+                      </div>
+                    </td>
+                    {!isApplicant && (
+                      <td className="px-4 py-3">
+                        <div>{a.institution_name_snapshot || a.applicant_name_snapshot}</div>
+                        <div className="text-[11px] text-[color:var(--color-ink-soft)]">{a.email_snapshot}</div>
+                      </td>
+                    )}
+                    <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
+                    <td className="px-4 py-3 text-[color:var(--color-ink-soft)]">{fmtRel(a.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {data && data.meta.totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4 text-[12px]">
+              <div className="text-[color:var(--color-ink-soft)]">
+                Page {data.meta.page} of {data.meta.totalPages} — {data.meta.total} total
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="btn btn-ghost"
+                  disabled={!data.meta.hasPrev}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >Previous</button>
+                <button
+                  className="btn btn-ghost"
+                  disabled={!data.meta.hasNext}
+                  onClick={() => setPage((p) => p + 1)}
+                >Next</button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

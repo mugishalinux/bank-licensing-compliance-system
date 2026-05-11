@@ -1,27 +1,42 @@
-import api from './axios';
-import { ApiResponse, User, UserRole } from '../types';
+import api, { unwrap, unwrapPage } from './axios';
+import { ApplicantType, Envelope, User, UserRole } from '../types';
 
 export const usersApi = {
-  list: async (): Promise<User[]> => {
-    const res = await api.get<ApiResponse<User[]>>('/users');
-    return res.data.data;
-  },
+  list: (q: {
+    search?: string;
+    role?: UserRole;
+    department_id?: string;
+    is_active?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {}) => api.get<Envelope<User[]>>('/users', { params: q }).then(unwrapPage),
 
-  create: async (data: {
+  get: (id: string) =>
+    api.get<Envelope<User>>(`/users/${id}`).then(unwrap),
+
+  create: (dto: {
     email: string;
     password: string;
-    role: UserRole;
     full_name: string;
-  }): Promise<User> => {
-    const res = await api.post<ApiResponse<User>>('/users', data);
-    return res.data.data;
-  },
+    role: UserRole;
+    phone?: string;
+    department_id?: string;
+    applicant_type?: ApplicantType;
+    institution_name?: string;
+  }) => api.post<Envelope<User>>('/users', dto).then(unwrap),
 
-  deactivate: async (id: string): Promise<void> => {
-    await api.patch(`/users/${id}/deactivate`);
-  },
+  update: (id: string, dto: Partial<{
+    full_name: string;
+    phone: string;
+    department_id: string | null;
+    applicant_type: ApplicantType | null;
+    institution_name: string | null;
+    is_active: boolean;
+  }>) => api.patch<Envelope<User>>(`/users/${id}`, dto).then(unwrap),
 
-  activate: async (id: string): Promise<void> => {
-    await api.patch(`/users/${id}/activate`);
-  },
+  deactivate: (id: string) =>
+    api.patch<Envelope<{ message: string }>>(`/users/${id}/deactivate`).then(unwrap),
+
+  activate: (id: string) =>
+    api.patch<Envelope<{ message: string }>>(`/users/${id}/activate`).then(unwrap),
 };

@@ -1,130 +1,163 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { Building2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { ArrowLeft } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { errorMessage } from '../utils/formatters';
 
 export default function LoginPage() {
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const { requestLoginOtp, confirmLoginOtp } = useAuth();
+  const nav = useNavigate();
+  const [step, setStep] = useState<'credentials' | 'otp'>('credentials');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
+  const doRequest = async () => {
+    setBusy(true);
     try {
-      await login(email, password);
-      navigate('/');
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Login failed. Please check your credentials.';
-      toast.error(msg);
+      await requestLoginOtp(email.trim().toLowerCase(), password);
+      toast.success('A 6-digit code has been sent to your email');
+      setStep('otp');
+    } catch (e) {
+      toast.error(errorMessage(e, 'Invalid email or password'));
     } finally {
-      setIsLoading(false);
+      setBusy(false);
+    }
+  };
+
+  const doVerify = async () => {
+    setBusy(true);
+    try {
+      await confirmLoginOtp(email.trim().toLowerCase(), otp.trim());
+      nav('/');
+    } catch (e) {
+      toast.error(errorMessage(e, 'Invalid or expired code'));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <Building2 className="text-blue-600" size={32} />
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">BNR Licensing Portal</h1>
-              <p className="text-sm text-gray-500">National Bank of Rwanda</p>
-            </div>
+    <AuthShell title="Sign in" subtitle="Welcome back to BNR Licensing Portal">
+      {step === 'credentials' ? (
+        <form onSubmit={(e) => { e.preventDefault(); void doRequest(); }} className="space-y-4">
+          <div>
+            <label className="label">Email</label>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="input"
+              placeholder="you@bnr.rw"
+            />
           </div>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Email address
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="you@example.rw"
-                autoComplete="email"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-                autoComplete="current-password"
-              />
-            </div>
-
+          <div>
+            <label className="label">Password</label>
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input"
+              placeholder="••••••••"
+            />
+          </div>
+          <button type="submit" className="btn btn-primary w-full" disabled={busy}>
+            {busy ? 'Sending code…' : 'Continue'}
+          </button>
+          <div className="flex items-center justify-between text-[12px] pt-1">
+            <Link to="/forgot-password" className="text-bnr hover:underline">Forgot password?</Link>
+            <Link to="/register" className="text-bnr hover:underline">Create an account</Link>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={(e) => { e.preventDefault(); void doVerify(); }} className="space-y-4">
+          <div>
             <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors"
+              type="button"
+              onClick={() => { setStep('credentials'); setOtp(''); }}
+              className="text-[12px] text-[color:var(--color-ink-soft)] inline-flex items-center gap-1 hover:text-bnr"
             >
-              {isLoading ? 'Signing in...' : 'Sign in'}
+              <ArrowLeft size={13} /> Change email
             </button>
-          </form>
-
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Test accounts by role</p>
-            <div className="space-y-2 text-xs text-gray-700">
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 w-20 justify-center shrink-0">Admin</span>
-                <button
-                  type="button"
-                  onClick={() => { setEmail('admin@bnr.rw'); setPassword('Admin@1234'); }}
-                  className="font-mono text-left hover:text-blue-600 transition-colors"
-                >admin@bnr.rw / Admin@1234</button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 w-20 justify-center shrink-0">Reviewer</span>
-                <button
-                  type="button"
-                  onClick={() => { setEmail('reviewer@bnr.rw'); setPassword('Reviewer@1234'); }}
-                  className="font-mono text-left hover:text-blue-600 transition-colors"
-                >reviewer@bnr.rw / Reviewer@1234</button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 w-20 justify-center shrink-0">Approver</span>
-                <button
-                  type="button"
-                  onClick={() => { setEmail('approver@bnr.rw'); setPassword('Approver@1234'); }}
-                  className="font-mono text-left hover:text-blue-600 transition-colors"
-                >approver@bnr.rw / Approver@1234</button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 w-20 justify-center shrink-0">Applicant 1</span>
-                <button
-                  type="button"
-                  onClick={() => { setEmail('bank1@example.rw'); setPassword('Bank1@1234'); }}
-                  className="font-mono text-left hover:text-blue-600 transition-colors"
-                >bank1@example.rw / Bank1@1234</button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 w-20 justify-center shrink-0">Applicant 2</span>
-                <button
-                  type="button"
-                  onClick={() => { setEmail('bank2@example.rw'); setPassword('Bank2@1234'); }}
-                  className="font-mono text-left hover:text-blue-600 transition-colors"
-                >bank2@example.rw / Bank2@1234</button>
-              </div>
-            </div>
-            <p className="text-xs text-gray-400 mt-2">Click any row to fill the form</p>
           </div>
+          <div>
+            <label className="label">Verification code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              autoFocus
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+              className="input text-center text-lg tracking-[0.4em]"
+              placeholder="••••••"
+            />
+            <p className="text-[11px] text-[color:var(--color-ink-soft)] mt-1.5">
+              Sent to <span className="font-medium">{email}</span>. Expires in 5 minutes.
+            </p>
+          </div>
+          <button type="submit" className="btn btn-primary w-full" disabled={busy || otp.length !== 6}>
+            {busy ? 'Verifying…' : 'Sign in'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { void doRequest(); }}
+            className="btn btn-ghost w-full"
+            disabled={busy}
+          >
+            Resend code
+          </button>
+        </form>
+      )}
+    </AuthShell>
+  );
+}
+
+export function AuthShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen grid lg:grid-cols-2">
+      <div className="hidden lg:flex bg-bnr text-white flex-col justify-between p-12">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded bg-white text-bnr flex items-center justify-center font-bold">BNR</div>
+          <div>
+            <div className="font-semibold">Licensing Portal</div>
+            <div className="text-white/70 text-[12px]">National Bank of Rwanda</div>
+          </div>
+        </div>
+        <div>
+          <h2 className="text-3xl font-semibold leading-tight max-w-md">
+            Licensing & compliance for Rwanda's financial sector.
+          </h2>
+          <p className="mt-3 text-white/80 text-sm max-w-md">
+            Submit and track license applications, respond to reviewer requests, and stay compliant — all in one place.
+          </p>
+        </div>
+        <div className="text-[12px] text-white/60">© {new Date().getFullYear()} National Bank of Rwanda</div>
+      </div>
+
+      <div className="flex items-center justify-center px-6 py-12 bg-[color:var(--color-surface)]">
+        <div className="w-full max-w-sm">
+          <div className="mb-7">
+            <h1 className="text-xl font-semibold">{title}</h1>
+            {subtitle && <p className="text-[13px] text-[color:var(--color-ink-soft)] mt-1">{subtitle}</p>}
+          </div>
+          {children}
         </div>
       </div>
     </div>

@@ -1,16 +1,12 @@
-import api from './axios';
-import { ApiResponse, AuditLog, PaginatedResponse } from '../types';
+import api, { unwrap } from './axios';
+import { AuditLog, Envelope } from '../types';
 
 export const auditApi = {
-  list: async (page = 1, limit = 50): Promise<PaginatedResponse<AuditLog>> => {
-    const res = await api.get<ApiResponse<PaginatedResponse<AuditLog>>>(
-      `/audit?page=${page}&limit=${limit}`,
-    );
-    return res.data.data;
-  },
+  list: (q: { page?: number; limit?: number } = {}) =>
+    api
+      .get<Envelope<{ data: AuditLog[]; total: number }>>('/audit', { params: q })
+      .then(unwrap),
 
-  byApplication: async (applicationId: string): Promise<AuditLog[]> => {
-    const res = await api.get<ApiResponse<AuditLog[]>>(`/audit/application/${applicationId}`);
-    return res.data.data;
-  },
+  byApplication: (id: string) =>
+    api.get<Envelope<AuditLog[]>>(`/audit/application/${id}`).then(unwrap),
 };
