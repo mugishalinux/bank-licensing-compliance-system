@@ -7,10 +7,15 @@ import {
   UpdateLicenseTypeDto,
 } from './dto/license-type.dto';
 import { FilterHelper } from '../common/helpers/filter.helper';
+import { RedisHelper } from '../common/helpers/redis.helper';
+import { LOOKUP_TTL, cacheKeys } from '../common/helpers/cache-keys';
 
 @Injectable()
 export class LicenseTypesService {
-  constructor(private filter: FilterHelper) {}
+  constructor(
+    private filter: FilterHelper,
+    private cache: RedisHelper,
+  ) {}
 
   async create(dto: CreateLicenseTypeDto) {
     const dept = await Department.findOne({ where: { id: dto.department_id } });
@@ -44,16 +49,16 @@ export class LicenseTypesService {
   }
 
   async getOne(id: string) {
-    const lt = await LicenseType.findOne({
-      where: { id },
-      relations: ['department', 'requirements'],
-    });
-    if (!lt) throw new NotFoundException('License type not found');
+    const cached = await this.cache.get<LicenseType>(cacheKeys.licenseType(id));
+    if (cached) return cached;
+
+    const lt = await this.findEntity(id);
+    await this.cache.set(cacheKeys.licenseType(id), lt, LOOKUP_TTL);
     return lt;
   }
 
   async update(id: string, dto: UpdateLicenseTypeDto) {
-    const lt = await this.getOne(id);
+    const lt = await this.findEntity(id);
 
     if (dto.name && dto.name !== lt.name) {
       const dup = await LicenseType.findOne({ where: { name: dto.name } });
@@ -72,13 +77,26 @@ export class LicenseTypesService {
 
     Object.assign(lt, dto);
     if (willBePaid === false) lt.fee_amount = null;
-    return lt.save();
+    const saved = await lt.save();
+    await this.cache.del(cacheKeys.licenseType(id));
+    return saved;
   }
 
   async deactivate(id: string) {
-    const lt = await this.getOne(id);
+    const lt = await this.findEntity(id);
     if (!lt.is_active) return lt;
     lt.is_active = false;
-    return lt.save();
+    const saved = await lt.save();
+    await this.cache.del(cacheKeys.licenseType(id));
+    return saved;
+  }
+
+  private async findEntity(id: string) {
+    const lt = await LicenseType.findOne({
+      where: { id },
+      relations: ['department', 'requirements'],
+    });
+    if (!lt) throw new NotFoundException('License type not found');
+    return lt;
   }
 }

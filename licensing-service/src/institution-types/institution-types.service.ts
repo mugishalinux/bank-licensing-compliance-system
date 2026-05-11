@@ -6,10 +6,15 @@ import {
   UpdateInstitutionTypeDto,
 } from './dto/institution-type.dto';
 import { FilterHelper } from '../common/helpers/filter.helper';
+import { RedisHelper } from '../common/helpers/redis.helper';
+import { LOOKUP_TTL, cacheKeys } from '../common/helpers/cache-keys';
 
 @Injectable()
 export class InstitutionTypesService {
-  constructor(private filter: FilterHelper) {}
+  constructor(
+    private filter: FilterHelper,
+    private cache: RedisHelper,
+  ) {}
 
   async create(dto: CreateInstitutionTypeDto) {
     if (await InstitutionType.findOne({ where: { name: dto.name } })) {
@@ -30,25 +35,38 @@ export class InstitutionTypesService {
   }
 
   async getOne(id: string) {
-    const t = await InstitutionType.findOne({ where: { id } });
-    if (!t) throw new NotFoundException('Institution type not found');
+    const cached = await this.cache.get<InstitutionType>(cacheKeys.instType(id));
+    if (cached) return cached;
+
+    const t = await this.findEntity(id);
+    await this.cache.set(cacheKeys.instType(id), t, LOOKUP_TTL);
     return t;
   }
 
   async update(id: string, dto: UpdateInstitutionTypeDto) {
-    const t = await this.getOne(id);
+    const t = await this.findEntity(id);
     if (dto.name && dto.name !== t.name) {
       const dup = await InstitutionType.findOne({ where: { name: dto.name } });
       if (dup) throw new BadRequestException('Name already in use');
     }
     Object.assign(t, dto);
-    return t.save();
+    const saved = await t.save();
+    await this.cache.del(cacheKeys.instType(id));
+    return saved;
   }
 
   async deactivate(id: string) {
-    const t = await this.getOne(id);
+    const t = await this.findEntity(id);
     if (!t.is_active) return t;
     t.is_active = false;
-    return t.save();
+    const saved = await t.save();
+    await this.cache.del(cacheKeys.instType(id));
+    return saved;
+  }
+
+  private async findEntity(id: string) {
+    const t = await InstitutionType.findOne({ where: { id } });
+    if (!t) throw new NotFoundException('Institution type not found');
+    return t;
   }
 }
