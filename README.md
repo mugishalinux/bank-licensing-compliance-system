@@ -53,6 +53,8 @@ The first boot takes a couple of minutes. MySQL has to initialize, Kafka comes u
 | MinIO console | http://localhost:9090 (minioadmin / minioadmin) |
 | Kafdrop | http://localhost:9000 |
 
+> Note: While testing login or password reset, open `http://localhost:8025` in another tab to view the OTP emails sent by the system. Use the OTP from MailHog to complete authentication.
+
 The first time the licensing service starts, it seeds the database with departments, institution types, license types, and a handful of test accounts you can use right away.
 
 When you're done:
