@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { EntityManager } from 'typeorm';
 import { Comment, CommentKind } from './entities/comment.entity';
 import { Application } from '../applications/entities/application.entity';
 import { User } from '../users/entities/user.entity';
@@ -34,6 +35,7 @@ export class CommentsService {
     kind: CommentKind,
     body: string,
     attachment?: { key: string; name: string },
+    m?: EntityManager,
   ) {
     const c = new Comment();
     c.application_id = applicationId;
@@ -42,7 +44,7 @@ export class CommentsService {
     c.body = body;
     c.attachment_key = attachment?.key ?? null;
     c.attachment_name = attachment?.name ?? null;
-    return c.save();
+    return m ? m.save(Comment, c) : c.save();
   }
 
   private async assertVisible(applicationId: string, actor: User) {

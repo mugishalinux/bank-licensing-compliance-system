@@ -125,6 +125,99 @@ services:
     networks:
       - bnr
 
+  licensing-service:
+    build: ./licensing-service
+    container_name: bnr-licensing
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_PASSWORD: password
+      DB_NAME: bank_licensing
+      JWT_SECRET: bnr-dev-access-secret
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_SECRET: bnr-dev-refresh-secret
+      JWT_REFRESH_EXPIRES_IN: 7d
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      KAFKA_BROKER_URL: kafka:29092
+      KAFKA_CLIENT_ID: licensing-service
+      KAFKA_GROUP_ID: licensing
+      APPLICATION_NAME: bnr-licensing
+      SEND_EMAIL_REQUEST_TOPIC: send-email
+      APPLICATION_EVENTS_TOPIC: application-events
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_PUBLIC_ENDPOINT: localhost
+      MINIO_PUBLIC_PORT: 9001
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: bnr-documents
+      FRONTEND_URL: http://localhost:5173
+    ports:
+      - "3001:3001"
+    networks:
+      - bnr
+
+  mailing-sender-service:
+    build: ./mailing-sender-service
+    container_name: bnr-mailing
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      NODE_PORT: 3002
+      APPLICATION_NAME: bnr-mailing
+      KAFKA_BROKER_URL: kafka:29092
+      KAFKA_GROUP_ID: mailing
+      SEND_EMAIL_REQUEST_TOPIC: send-email
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      QUEUE_NAME: mailing
+      QUEUE_RETRIES: 3
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM: "BNR Licensing Portal <noreply@bnr.rw>"
+    ports:
+      - "3002:3002"
+    networks:
+      - bnr
+
+  frontend:
+    build: ./frontend
+    container_name: bnr-frontend
+    restart: unless-stopped
+    depends_on:
+      - licensing-service
+    ports:
+      - "5173:80"
+    networks:
+      - bnr
+
 volumes:
   mysql_data:
   redis_data:

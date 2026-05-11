@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { Application } from './entities/application.entity';
 import { LicenseType } from '../license-types/entities/license-type.entity';
 import { User } from '../users/entities/user.entity';
@@ -147,7 +147,7 @@ export class ApplicationsService {
   }
 
   requestInfo(id: string, dto: RequestInfoDto, actor: User) {
-    return this.transition(id, actor, async (a) => {
+    return this.transition(id, actor, async (a, m) => {
       this.state.validateTransition(a, ApplicationStatus.ADDITIONAL_INFO_REQUIRED, actor);
       this.assertAssignedReviewer(a, actor);
       a.status = ApplicationStatus.ADDITIONAL_INFO_REQUIRED;
@@ -160,6 +160,7 @@ export class ApplicationsService {
         dto.attachment_key && dto.attachment_name
           ? { key: dto.attachment_key, name: dto.attachment_name }
           : undefined,
+        m,
       );
 
       await this.events.sendEmail({
@@ -174,22 +175,22 @@ export class ApplicationsService {
   }
 
   completeReview(id: string, dto: CompleteReviewDto, actor: User) {
-    return this.transition(id, actor, async (a) => {
+    return this.transition(id, actor, async (a, m) => {
       this.state.validateTransition(a, ApplicationStatus.REVIEWED, actor);
       this.assertAssignedReviewer(a, actor);
       a.status = ApplicationStatus.REVIEWED;
-      await this.comments.record(a.id, actor.id, CommentKind.REVIEW_NOTE, dto.comment);
+      await this.comments.record(a.id, actor.id, CommentKind.REVIEW_NOTE, dto.comment, undefined, m);
       return { action: 'REVIEW_COMPLETED' };
     });
   }
 
   approve(id: string, dto: ApproveDto, actor: User) {
-    return this.transition(id, actor, async (a) => {
+    return this.transition(id, actor, async (a, m) => {
       this.state.validateTransition(a, ApplicationStatus.APPROVED, actor);
       a.status = ApplicationStatus.APPROVED;
       a.approver_id = actor.id;
       a.decided_at = new Date();
-      await this.comments.record(a.id, actor.id, CommentKind.APPROVAL, dto.comment);
+      await this.comments.record(a.id, actor.id, CommentKind.APPROVAL, dto.comment, undefined, m);
       await this.events.sendEmail({
         to: a.email_snapshot,
         name: a.applicant_name_snapshot,
@@ -201,12 +202,12 @@ export class ApplicationsService {
   }
 
   reject(id: string, dto: RejectDto, actor: User) {
-    return this.transition(id, actor, async (a) => {
+    return this.transition(id, actor, async (a, m) => {
       this.state.validateTransition(a, ApplicationStatus.REJECTED, actor);
       a.status = ApplicationStatus.REJECTED;
       a.approver_id = actor.id;
       a.decided_at = new Date();
-      await this.comments.record(a.id, actor.id, CommentKind.REJECTION, dto.comment);
+      await this.comments.record(a.id, actor.id, CommentKind.REJECTION, dto.comment, undefined, m);
       await this.events.sendEmail({
         to: a.email_snapshot,
         name: a.applicant_name_snapshot,
@@ -220,7 +221,7 @@ export class ApplicationsService {
   private async transition(
     id: string,
     actor: User,
-    mutate: (a: Application) => Promise<{ action: string }>,
+    mutate: (a: Application, m: EntityManager) => Promise<{ action: string }>,
   ) {
     return this.ds.transaction('SERIALIZABLE', async (m) => {
       const a = await m
@@ -233,7 +234,7 @@ export class ApplicationsService {
       this.assertVisible(a, actor);
 
       const prev = a.status;
-      const { action } = await mutate(a);
+      const { action } = await mutate(a, m);
 
       try {
         await m.save(Application, a);

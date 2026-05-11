@@ -46,3 +46,6 @@ PROGRESS.md
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Per-developer compose tweaks (e.g. remap conflicting host ports)
+docker-compose.override.yml
