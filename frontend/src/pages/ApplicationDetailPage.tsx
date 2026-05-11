@@ -12,6 +12,7 @@ import { PageLoader } from '../components/common/Spinner';
 import Confirm from '../components/common/Confirm';
 import DocumentsPanel from '../components/application/DocumentsPanel';
 import CommentsPanel from '../components/application/CommentsPanel';
+import ActionsPanel from '../components/application/ActionsPanel';
 
 const SUBMITTABLE = [ApplicationStatus.DRAFT, ApplicationStatus.ADDITIONAL_INFO_REQUIRED];
 
@@ -80,6 +81,7 @@ export default function ApplicationDetailPage() {
         </div>
 
         <aside className="space-y-5">
+          <ActionsPanel app={a} />
           <ApplicantCard app={a} />
           <LicenseCard app={a} />
           {(a.reviewer || a.approver) && <AssignmentCard app={a} />}
