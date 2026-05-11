@@ -1,4 +1,5 @@
-import Stub from '../components/common/Stub';
+import { Navigate } from 'react-router-dom';
+
 export default function NewApplicationPage() {
-  return <Stub title="New application" />;
+  return <Navigate to="/catalog" replace />;
 }
