@@ -4,9 +4,9 @@
 
 This portal helps banks, insurance companies, microfinance institutions, and individuals apply for licenses from the National Bank of Rwanda.
 
-Applicants submit applications and documents through the portal. Inside BNR, reviewers and approvers process the applications step by step until they are approved or rejected.
+Applicants submit applications and documents through the portal. Inside BNR, reviewers and approvers process applications step by step until they are approved or rejected.
 
-The goal was to keep the system simple, secure, and easy to understand.
+The goal was to build something simple, secure, and easy to understand while still handling the important rules required in a regulatory system.
 
 ---
 
@@ -21,8 +21,8 @@ The system has 3 main parts:
 | Component | Purpose |
 |---|---|
 | Frontend (React) | User interface used by applicants and BNR staff |
-| Licensing Service (NestJS) | Main backend API that handles applications, users, documents, and approvals |
-| Mailing Service (NestJS) | Sends emails in the background |
+| Licensing Service (NestJS) | Main backend API that handles authentication, applications, documents, workflow, and audit logs |
+| Mailing Service (NestJS) | Handles email sending in the background |
 
 ---
 
@@ -32,8 +32,11 @@ The system has 3 main parts:
 2. The Licensing Service stores data in MySQL
 3. When an email is needed, the Licensing Service sends an event through Kafka
 4. The Mailing Service receives the event and sends the email
-5. Redis is used for caching, OTP storage, and queues
+5. Redis is used for OTP storage, caching, and queues
 6. MinIO stores uploaded files
+
+The frontend communicates only with the Licensing Service.  
+The Mailing Service works internally in the background.
 
 ---
 
@@ -43,7 +46,45 @@ The backend was split into two services because sending emails should not slow d
 
 The Licensing Service focuses on business logic while the Mailing Service handles email jobs separately.
 
-This keeps the API fast and makes retries easier if email delivery fails.
+Using Kafka between the services makes the system more reliable because application requests can still succeed even if email delivery temporarily fails.
+
+### Trade-off
+
+Using Kafka and multiple services adds more setup complexity compared to a single backend service.
+
+However, the separation keeps the API cleaner and avoids blocking user requests while emails are being processed.
+
+---
+
+# Authentication Strategy
+
+The system uses JWT authentication.
+
+JWT was chosen because it works well for APIs and keeps the backend stateless.
+
+It also makes it easier to separate frontend and backend services without storing server sessions.
+
+The system uses:
+
+- short-lived access tokens
+- refresh tokens
+- email OTP verification during login
+
+Access tokens expire after 15 minutes and refresh tokens expire after 7 days.
+
+---
+
+# API Design
+
+The API follows a consistent JSON response structure for both success and error responses.
+
+Unauthorized actions return HTTP 403 responses.
+
+Validation errors return 400 responses.
+
+Unexpected server errors are handled globally so raw stack traces are never exposed to users.
+
+Swagger documentation is included for testing and API exploration.
 
 ---
 
@@ -104,6 +145,8 @@ Stores uploaded files.
 
 Files are stored in MinIO.
 
+Documents are versioned so older submissions remain accessible after resubmission.
+
 ---
 
 ## Audit Logs
@@ -121,6 +164,10 @@ Stores activity history.
 | timestamp | Action time |
 
 The audit log helps track everything that happens in the system.
+
+The audit log was designed as an append-only history because application decisions may later need to be reviewed as legal or compliance evidence.
+
+Audit records are never updated or deleted.
 
 ---
 
@@ -160,6 +207,8 @@ The audit log helps track everything that happens in the system.
 
 No other transitions are allowed.
 
+Illegal state transitions are rejected at the API level.
+
 ---
 
 ## Rules Behind the Workflow
@@ -168,7 +217,15 @@ No other transitions are allowed.
 
 Once a reviewer starts reviewing an application, only that reviewer can continue working on it.
 
-This avoids conflicts and confusion.
+This avoids conflicts and duplicate work.
+
+---
+
+### Reviewer and approver separation
+
+The reviewer and approver must always be different users.
+
+This rule is enforced in the backend and cannot be bypassed from the frontend.
 
 ---
 
@@ -196,6 +253,16 @@ If changes are needed later, a new application must be created.
 Every important action creates an audit log entry.
 
 This helps with tracking and accountability.
+
+---
+
+# Concurrent Access Handling
+
+The system prevents two users from changing the same application at the same time.
+
+When an application transition starts, the application row is locked inside a database transaction until the operation finishes.
+
+This prevents situations where two reviewers try to update the same application simultaneously and create inconsistent data.
 
 ---
 
@@ -278,7 +345,10 @@ The reviewer and approver roles were separated to improve accountability.
 
 The person checking an application should not be the same person making the final decision.
 
-Admins were also separated from approval decisions. This keeps system management separate from business decisions.
+Admins were also separated from approval decisions. This keeps system management separate from licensing decisions.
+
+All permission checks are enforced in the backend.  
+Even if a user bypasses the frontend and calls the API directly, unauthorized actions are still rejected.
 
 ---
 
@@ -301,15 +371,21 @@ Redis stores temporary OTPs.
 
 ### Why
 
-This adds extra security without making login too complicated.
+This adds extra security without making login too complicated for users.
+
+---
+
+### Trade-off
+
+Email OTP is simple and easy to implement, but it depends on email delivery speed.
 
 ---
 
 ### What could be improved later
 
 - SMS OTP support
-- better OTP rate limiting
 - authenticator app support
+- stronger OTP rate limiting
 
 ---
 
@@ -317,7 +393,7 @@ This adds extra security without making login too complicated.
 
 ### What was implemented
 
-Role guards protect endpoints.
+Role guards protect backend endpoints.
 
 Department checks are also done inside services.
 
@@ -325,13 +401,23 @@ Department checks are also done inside services.
 
 ### Why
 
-Checking permissions only in controllers is not enough. Service-level checks add extra protection.
+Checking permissions only in controllers is not enough.
+
+Service-level checks add another layer of protection.
+
+---
+
+### Trade-off
+
+The authorization logic becomes slightly more complex, but it improves security and reduces the risk of permission bypass.
 
 ---
 
 ### What could be improved later
 
-More advanced permission rules could be added later.
+- more advanced permission rules
+- temporary delegated access
+- attribute-based access control
 
 ---
 
@@ -341,13 +427,27 @@ More advanced permission rules could be added later.
 
 Every important action writes to the audit log.
 
-Audit records are never edited or deleted.
+Audit records are append-only and are never edited or deleted.
+
+Each audit entry stores:
+
+- acting user
+- action performed
+- timestamp
+- previous application state
+- new application state
 
 ---
 
 ### Why
 
-The system needs accountability and traceability.
+The system needs accountability and traceability because licensing decisions are sensitive and may later be reviewed as legal evidence.
+
+---
+
+### Trade-off
+
+Append-only logs improve trust and traceability, but correcting mistakes becomes harder because records cannot simply be edited.
 
 ---
 
@@ -355,7 +455,67 @@ The system needs accountability and traceability.
 
 - audit admin actions
 - export audit reports
-- move logs to immutable storage
+- immutable external log storage
+
+---
+
+## Workflow State Management
+
+### What was implemented
+
+Applications move through a strict state machine.
+
+Invalid transitions are rejected by the backend API.
+
+Approved and rejected applications are final.
+
+---
+
+### Why
+
+A strict workflow prevents inconsistent application states and keeps the review process predictable.
+
+---
+
+### Trade-off
+
+Strict workflows reduce flexibility, but they improve reliability and process integrity.
+
+---
+
+### What could be improved later
+
+- configurable workflows
+- workflow analytics
+- escalation flows
+
+---
+
+## Concurrent Access Protection
+
+### What was implemented
+
+Database transactions and row locking are used during application state transitions.
+
+---
+
+### Why
+
+This prevents two users from updating the same application at the same time and causing inconsistent data.
+
+---
+
+### Trade-off
+
+Database locking adds some complexity and may slightly reduce performance under heavy load, but consistency is more important for this type of system.
+
+---
+
+### What could be improved later
+
+- distributed locking
+- better retry handling
+- monitoring for lock contention
 
 ---
 
@@ -375,13 +535,25 @@ Allowed files:
 - DOC
 - DOCX
 
+Maximum file size is 5MB and is enforced server-side.
+
+Documents are versioned when applications are resubmitted.
+
 ---
 
 ### Why
 
 Direct uploads reduce backend load and improve performance.
 
-Validation helps prevent unsafe files.
+Validation helps prevent unsafe or invalid files.
+
+Versioning keeps older submissions accessible for review history.
+
+---
+
+### Trade-off
+
+Direct upload flows are slightly more complex than normal uploads, but they scale better and reduce backend memory usage.
 
 ---
 
@@ -403,7 +575,13 @@ Emails are sent through Kafka and processed by the Mailing Service.
 
 ### Why
 
-This prevents email delays from slowing down the main API.
+This prevents email delivery delays from slowing down the main API.
+
+---
+
+### Trade-off
+
+Using Kafka adds more infrastructure complexity, but it improves reliability and keeps the main application responsive.
 
 ---
 
@@ -431,14 +609,62 @@ Redis caches lookup data like:
 
 These values change rarely but are requested often.
 
-Caching improves speed and reduces database load.
+Caching improves response speed and reduces unnecessary database queries.
+
+---
+
+### Trade-off
+
+The cache must be invalidated whenever data changes, which adds some extra complexity.
 
 ---
 
 ### What could be improved later
 
 - smarter cache invalidation
-- monitoring cache performance
+- cache monitoring
+- distributed caching
+
+---
+
+# Testing
+
+The project includes tests for:
+
+- valid state transitions
+- invalid state transitions
+- role authorization rules
+- concurrent access handling
+
+The focus of testing was business rules, permission boundaries, and workflow integrity because these areas are the most critical in a regulatory system.
+
+---
+
+# Seed Data
+
+Seed scripts are included to create:
+
+- at least one user for every role
+- sample applications in different states
+
+This allows reviewers to run and test the system immediately without manual database setup.
+
+---
+
+# What Was Deliberately Left Out
+
+Some production-level features were intentionally left out to keep the project focused and manageable for the assessment.
+
+Examples include:
+
+- virus scanning
+- Kubernetes deployment
+- advanced monitoring
+- SMS notifications
+- resumable uploads
+- distributed microservices
+
+The goal was to prioritize correctness, workflow integrity, security, and maintainability first.
 
 ---
 
@@ -448,7 +674,7 @@ The main goal of this project was to build a licensing system that is:
 
 - simple
 - secure
-- easy to maintain
+- maintainable
 - easy to understand
 
-The design focused more on clean structure and clear responsibilities than adding unnecessary complexity.
+The design focused more on clear structure, business rules.
